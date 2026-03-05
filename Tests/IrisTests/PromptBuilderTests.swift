@@ -64,6 +64,46 @@ struct PromptBuilderTests {
         #expect(prompt.contains(#""total": {"type": ["string", "null"]}"#))
         #expect(prompt.contains(#""required": ["invoiceNumber"]"#))
     }
+
+    // MARK: - @Parseable Integration Tests (Strategy 1)
+
+    @Test("@Parseable struct uses irisSchema path — prompt contains typed integer")
+    func parseableStructUsesIrisSchemaPath() {
+        let prompt = PromptBuilder.build(for: TypedParseableReceipt.self)
+        // "integer" is the discriminating signal: Mirror ALWAYS produces "string" for Int.
+        // Its presence in the prompt proves Strategy 1 (irisSchema) was used.
+        #expect(prompt.contains("\"integer\""))
+    }
+
+    @Test("@Parseable prompt contains all typed JSON Schema types")
+    func parseablePromptContainsAllTypedFields() {
+        let prompt = PromptBuilder.build(for: TypedParseableReceipt.self)
+        #expect(prompt.contains("\"integer\""))  // count: Int
+        #expect(prompt.contains("\"number\""))   // total: Double
+        #expect(prompt.contains("\"boolean\""))  // isPaid: Bool
+    }
+
+    @Test("Mirror fallback produces valid prompt for plain Decodable")
+    func mirrorFallbackProducesValidPrompt() {
+        // MixedReceipt is plain Decodable (no @Parseable) → goes through Mirror Strategy 2
+        let prompt = PromptBuilder.build(for: MixedReceipt.self)
+        #expect(!prompt.isEmpty)
+        // Mirror produces "string" for all fields — no "integer", "number", "boolean"
+        #expect(prompt.contains("\"string\""))
+        #expect(prompt.contains("invoiceNumber"))
+    }
+}
+
+// Declare at FILE SCOPE — NOT inside @Suite, NOT private.
+// @Parseable macro expansion generates an extension at compile time;
+// the struct must be at module declaration scope.
+@Parseable
+struct TypedParseableReceipt {
+    var store: String
+    var count: Int       // → "integer" in schema
+    var total: Double    // → "number" in schema
+    var isPaid: Bool     // → "boolean" in schema
+    var date: String?    // → nullable ["string","null"] in schema
 }
 
 // Test structs that conform to IrisSchemaProviding to test Strategy 1

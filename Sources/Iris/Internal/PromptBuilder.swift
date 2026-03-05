@@ -2,14 +2,28 @@ import Foundation
 
 enum PromptBuilder {
 
-    // MARK: - Public Entry Point
+    // MARK: - Dual Schema Strategy
 
+    // Builds the prompt for the given Decodable type T using two strategies:
+    //
+    // Strategy 1 — @Parseable schema (preferred, compile-time)
+    //   If T conforms to IrisSchemaProviding (synthesized by the @Parseable macro),
+    //   uses T.irisSchema: a compile-time JSON Schema with precise types —
+    //   "integer" for Int, "number" for Double, "boolean" for Bool.
+    //   Access via protocol check (type as? IrisSchemaProviding.Type) — never force-cast.
+    //
+    // Strategy 2 — Mirror reflection fallback (runtime)
+    //   If T is a plain Decodable without @Parseable, falls back to Mirror reflection.
+    //   Mirror-derived schemas type ALL fields as "string" (no type fidelity).
+    //   Optional fields are correctly marked nullable. Functional but less precise —
+    //   use @Parseable for structs with typed numeric or boolean fields.
     static func build<T: Decodable>(for type: T.Type) -> String {
-        // Strategy 1: @Parseable-generated schema (compile-time, preferred — see Story 4.1)
+        // Strategy 1: @Parseable types conform to IrisSchemaProviding via macro expansion.
+        // Compile-time schema with typed properties — preferred over Mirror.
         if let providing = type as? IrisSchemaProviding.Type {
             return formatPrompt(schema: providing.irisSchema)
         }
-        // Strategy 2: Mirror reflection fallback (runtime, functional but no field descriptions)
+        // Strategy 2: Mirror reflection — all fields typed "string", Optional fields nullable.
         return buildViaMirror(for: type)
     }
 
