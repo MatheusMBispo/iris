@@ -9,8 +9,14 @@ struct ImagePipelineTests {
 
     @Test func normalizeURL_missingFile_throwsImageUnreadable() throws {
         let url = URL(fileURLWithPath: "/tmp/iris_nonexistent_\(UUID().uuidString).jpg")
-        #expect(throws: IrisError.self) {
+        do {
             _ = try ImagePipeline.normalize(url: url)
+            Issue.record("Expected IrisError.imageUnreadable but function returned normally")
+        } catch IrisError.imageUnreadable(let reason) {
+            #expect(reason.contains("Cannot read file"))
+            #expect(reason.contains(url.lastPathComponent))
+        } catch {
+            Issue.record("Expected IrisError.imageUnreadable but got \(error)")
         }
     }
 
@@ -22,6 +28,8 @@ struct ImagePipelineTests {
 
         let result = try ImagePipeline.normalize(url: url)
         #expect(!result.isEmpty)
+        #expect(result.starts(with: [0xFF, 0xD8]))
+        #expect(result.suffix(2) == Data([0xFF, 0xD9]))
     }
 
     // MARK: - Data + MIME type normalization
@@ -34,15 +42,19 @@ struct ImagePipelineTests {
         let jpegData = Self.minimalJPEGData()
 
         for mimeType in supportedTypes {
-            // These should NOT throw an unsupported-MIME error. They may throw imageUnreadable
-            // due to corrupt synthetic data, but NOT due to MIME rejection.
             do {
-                _ = try ImagePipeline.normalize(data: jpegData, mimeType: mimeType)
+                let normalized = try ImagePipeline.normalize(data: jpegData, mimeType: mimeType)
+                #expect(!normalized.isEmpty,
+                        "Expected normalized JPEG data for MIME type '\(mimeType)'")
+                #expect(normalized.starts(with: [0xFF, 0xD8]),
+                        "Expected JPEG header for MIME type '\(mimeType)'")
+                #expect(normalized.suffix(2) == Data([0xFF, 0xD9]),
+                        "Expected JPEG footer for MIME type '\(mimeType)'")
             } catch IrisError.imageUnreadable(let reason) {
                 #expect(!reason.contains("Unsupported MIME type"),
                         "MIME type '\(mimeType)' should be supported but was rejected: \(reason)")
             } catch {
-                // Other errors (e.g. decode failures on minimal data) are acceptable
+                Issue.record("Expected normalization success for '\(mimeType)' but got \(error)")
             }
         }
     }
@@ -75,8 +87,13 @@ struct ImagePipelineTests {
     @Test func normalizeData_corruptData_throwsImageUnreadable() {
         // Valid JPEG magic bytes prefix but truncated/corrupt body
         let corruptData = Data([0xFF, 0xD8, 0x00])
-        #expect(throws: IrisError.self) {
+        do {
             _ = try ImagePipeline.normalize(data: corruptData, mimeType: "image/jpeg")
+            Issue.record("Expected IrisError.imageUnreadable but function returned normally")
+        } catch IrisError.imageUnreadable(let reason) {
+            #expect(!reason.isEmpty)
+        } catch {
+            Issue.record("Expected IrisError.imageUnreadable but got \(error)")
         }
     }
 

@@ -13,6 +13,10 @@ public struct IrisModel: Sendable {
         claude(apiKey: apiKey, session: .shared)
     }
 
+    // MARK: - Mock Factory
+
+    public static let mock = IrisModel { _, _ in "{}" }
+
     // MARK: - Internal Factory (testable via injected session)
 
     static func claude(apiKey: String, session: URLSession) -> IrisModel {
@@ -115,4 +119,3 @@ private struct AnthropicResponse: Decodable {
         let text: String?
     }
 }
-

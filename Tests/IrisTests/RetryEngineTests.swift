@@ -4,9 +4,14 @@ import Testing
 
 // MARK: - Helpers
 
-private final class CaptureBox<T>: @unchecked Sendable {
-    var value: T
+private actor CaptureBox<T> {
+    private var value: T
+
     init(_ initial: T) { value = initial }
+
+    func get() -> T { value }
+
+    func set(_ newValue: T) { value = newValue }
 }
 
 // MARK: - RetryEngineTests
@@ -20,12 +25,12 @@ struct RetryEngineTests {
     func nonePolicy() async throws {
         let callCount = CaptureBox(0)
         let result = try? await RetryEngine.execute(policy: .none) {
-            callCount.value += 1
+            let current = await callCount.get()
+            await callCount.set(current + 1)
             throw IrisError.networkError(underlying: URLError(.timedOut))
-            return ""
         }
         #expect(result == nil)
-        #expect(callCount.value == 1)
+        #expect(await callCount.get() == 1)
     }
 
     // MARK: - Retry behavior
@@ -39,12 +44,12 @@ struct RetryEngineTests {
         }
         do {
             _ = try await RetryEngine.execute(policy: fastPolicy) {
-                callCount.value += 1
+                let current = await callCount.get()
+                await callCount.set(current + 1)
                 throw IrisError.networkError(underlying: URLError(.timedOut))
-                return ""
             }
         } catch {}
-        #expect(callCount.value == 3)
+        #expect(await callCount.get() == 3)
     }
 
     @Test("custom policy — does NOT retry decodingFailed")
@@ -56,12 +61,12 @@ struct RetryEngineTests {
         }
         do {
             _ = try await RetryEngine.execute(policy: policy) {
-                callCount.value += 1
+                let current = await callCount.get()
+                await callCount.set(current + 1)
                 throw IrisError.decodingFailed(raw: "{}")
-                return ""
             }
         } catch {}
-        #expect(callCount.value == 1)
+        #expect(await callCount.get() == 1)
     }
 
     @Test("custom policy — does NOT retry imageUnreadable")
@@ -73,12 +78,12 @@ struct RetryEngineTests {
         }
         do {
             _ = try await RetryEngine.execute(policy: policy) {
-                callCount.value += 1
+                let current = await callCount.get()
+                await callCount.set(current + 1)
                 throw IrisError.imageUnreadable(reason: "bad data")
-                return ""
             }
         } catch {}
-        #expect(callCount.value == 1)
+        #expect(await callCount.get() == 1)
     }
 
     @Test("custom policy — does NOT retry invalidAPIKey")
@@ -90,12 +95,12 @@ struct RetryEngineTests {
         }
         do {
             _ = try await RetryEngine.execute(policy: policy) {
-                callCount.value += 1
+                let current = await callCount.get()
+                await callCount.set(current + 1)
                 throw IrisError.invalidAPIKey
-                return ""
             }
         } catch {}
-        #expect(callCount.value == 1)
+        #expect(await callCount.get() == 1)
     }
 
     @Test("last error from final attempt propagates to caller")
@@ -105,7 +110,6 @@ struct RetryEngineTests {
         do {
             _ = try await RetryEngine.execute(policy: policy) {
                 throw IrisError.networkError(underlying: URLError(.timedOut))
-                return ""
             }
         } catch let e as IrisError {
             thrownError = e
@@ -119,15 +123,15 @@ struct RetryEngineTests {
     func attemptNumbering() async throws {
         let receivedAttempts = CaptureBox([Int]())
         let policy = RetryPolicy { error, attempt in
-            receivedAttempts.value.append(attempt)
+            let current = await receivedAttempts.get()
+            await receivedAttempts.set(current + [attempt])
             return attempt < 3
         }
         do {
             _ = try await RetryEngine.execute(policy: policy) {
                 throw IrisError.networkError(underlying: URLError(.timedOut))
-                return ""
             }
         } catch {}
-        #expect(receivedAttempts.value == [1, 2, 3])
+        #expect(await receivedAttempts.get() == [1, 2, 3])
     }
 }
