@@ -55,7 +55,8 @@ struct ResponseDecoderTests {
     @Test("JSONDecoder.iris uses convertFromSnakeCase strategy")
     func irisDecoder_usesSnakeCaseStrategy() throws {
         let json = #"{"first_name": "Carlos"}"#
-        let result = try JSONDecoder.iris.decode(SampleStruct.self, from: json.data(using: .utf8)!)
+        let data = try #require(json.data(using: .utf8))
+        let result = try JSONDecoder.iris.decode(SampleStruct.self, from: data)
         #expect(result.firstName == "Carlos")
     }
 }
