@@ -1,20 +1,61 @@
 import Foundation
 
+/// A Protocol Witnesses struct that encapsulates an AI model's parsing behavior.
+///
+/// `IrisModel` provides the boundary between `IrisClient` and any AI provider.
+/// The default implementation is `IrisModel.claude`, which calls the Anthropic Messages API.
+/// Use `IrisModel.mock` in tests and SwiftUI Previews to avoid real network calls.
+///
+/// Custom models can be injected without changing any call-site syntax:
+/// ```swift
+/// let custom = IrisModel { imageData, prompt in
+///     return #"{"storeName": "Iris Store", "total": 42.0}"#
+/// }
+/// let iris = IrisClient(apiKey: key, model: custom)
+/// ```
 public struct IrisModel: Sendable {
+
+    /// The underlying parsing closure that receives image data and a prompt, returning raw JSON.
+    ///
+    /// - Parameters:
+    ///   - imageData: JPEG-encoded image data to analyze.
+    ///   - prompt: A JSON Schema prompt describing the fields to extract.
+    /// - Returns: A raw JSON string matching the requested schema.
+    /// - Throws: Any `IrisError` variant appropriate to the failure.
     public var parse: @Sendable (_ imageData: Data, _ prompt: String) async throws -> String
 
+    /// Creates a custom `IrisModel` from a parsing closure.
+    ///
+    /// - Parameter parse: The async throwing closure that implements model parsing.
     public init(parse: @escaping @Sendable (_ imageData: Data, _ prompt: String) async throws -> String) {
         self.parse = parse
     }
 
     // MARK: - Public Factory
 
+    /// The default Claude model implementation using the Anthropic Messages API via URLSession.
+    ///
+    /// Sends JPEG image data and a JSON Schema prompt to the Anthropic API and returns
+    /// the raw JSON string from the model's first text content block.
+    ///
+    /// - Parameter apiKey: Your Anthropic API key.
+    /// - Returns: An `IrisModel` configured to call `https://api.anthropic.com/v1/messages`.
     public static func claude(apiKey: String) -> IrisModel {
         claude(apiKey: apiKey, session: .shared)
     }
 
     // MARK: - Mock Factory
 
+    /// A mock model that returns a hardcoded empty JSON object without making any network calls.
+    ///
+    /// Use `IrisModel.mock` in unit tests and SwiftUI Previews to avoid real API calls.
+    /// The mock returns `"{}"`, which decodes to a struct where all `Optional` fields are `nil`.
+    ///
+    /// ```swift
+    /// let iris = IrisClient(model: .mock)
+    /// let result = try await iris.parse(data: data, mimeType: "image/jpeg", as: MyStruct.self)
+    /// // result.anyOptionalField == nil
+    /// ```
     public static let mock = IrisModel { _, _ in "{}" }
 
     // MARK: - Internal Factory (testable via injected session)
@@ -50,13 +91,15 @@ public struct IrisModel: Sendable {
 // MARK: - Private Anthropic API Types
 
 private enum AnthropicRequest {
-    // Known-good hard-coded URL — cannot be nil
-    static let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
+    static let endpointString = "https://api.anthropic.com/v1/messages"
     static let model = "claude-opus-4-5"
     static let maxTokens = 4096
     static let anthropicVersion = "2023-06-01"
 
     static func build(imageData: Data, prompt: String, apiKey: String) throws -> URLRequest {
+        guard let endpoint = URL(string: endpointString) else {
+            throw IrisError.modelFailure(message: "Invalid Anthropic endpoint URL")
+        }
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")

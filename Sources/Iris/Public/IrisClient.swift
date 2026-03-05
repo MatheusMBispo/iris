@@ -8,11 +8,38 @@ import UIKit
 import AppKit
 #endif
 
+/// The main entry point for all Iris document parsing operations.
+///
+/// `IrisClient` is an `actor` — all `parse` calls execute off the main actor,
+/// guaranteeing zero UI blocking.
+///
+/// **Quick start:**
+/// ```swift
+/// let iris = IrisClient(apiKey: "sk-ant-...")
+/// let receipt = try await iris.parse(data: jpegData, mimeType: "image/jpeg", as: Receipt.self)
+/// ```
+///
+/// Use `IrisModel.mock` in tests to avoid real API calls:
+/// ```swift
+/// let iris = IrisClient(model: .mock)
+/// ```
 public actor IrisClient {
 
     let model: IrisModel        // internal let: accessible via @testable import for tests
     let retryPolicy: RetryPolicy
     let debugMode: Bool
+
+    /// The raw diagnostic data from the most recent `parse` call, or `nil` if debug mode is disabled.
+    ///
+    /// Always `nil` when `IrisClient` was initialized with `debugMode: false` (the default).
+    /// Updated after each `parse` call — whether it succeeds or throws.
+    ///
+    /// Access requires `await` because `IrisClient` is an actor:
+    /// ```swift
+    /// if let info = await iris.lastDebugInfo {
+    ///     print(info.rawJSON)
+    /// }
+    /// ```
     public private(set) var lastDebugInfo: IrisDebugInfo?
 
     // MARK: - Public Initializers
@@ -64,6 +91,17 @@ public actor IrisClient {
     // MARK: - Parse Overloads
 
     /// Parses raw image data with an explicit MIME type into the target `Decodable` type.
+    ///
+    /// - Parameters:
+    ///   - data: Raw image bytes. Supported MIME types: `"image/jpeg"`, `"image/png"`, `"image/webp"`, `"image/gif"`.
+    ///   - mimeType: The MIME type string describing the `data` format.
+    ///   - type: The `Decodable` type to decode the model response into.
+    /// - Returns: A fully populated instance of `T`.
+    /// - Throws: `IrisError.imageUnreadable` if the data cannot be normalized to JPEG.
+    ///           `IrisError.networkError` if a connectivity failure occurs.
+    ///           `IrisError.invalidAPIKey` if the API key is missing or rejected.
+    ///           `IrisError.modelFailure` if the model returns an error response.
+    ///           `IrisError.decodingFailed` if the model output cannot be decoded into `T`.
     public func parse<T: Decodable>(data: Data, mimeType: String, as type: T.Type) async throws -> T {
         // Stage 1: Image normalization
         IrisLogger.image.debug("Normalizing image [\(mimeType, privacy: .public)]")
@@ -109,6 +147,16 @@ public actor IrisClient {
     }
 
     /// Parses an image file at the given URL into the target `Decodable` type.
+    ///
+    /// - Parameters:
+    ///   - fileURL: A file URL pointing to the image to parse.
+    ///   - type: The `Decodable` type to decode the model response into.
+    /// - Returns: A fully populated instance of `T`.
+    /// - Throws: `IrisError.imageUnreadable` if the file cannot be read or normalized to JPEG.
+    ///           `IrisError.networkError` if a connectivity failure occurs.
+    ///           `IrisError.invalidAPIKey` if the API key is missing or rejected.
+    ///           `IrisError.modelFailure` if the model returns an error response.
+    ///           `IrisError.decodingFailed` if the model output cannot be decoded into `T`.
     public func parse<T: Decodable>(fileURL: URL, as type: T.Type) async throws -> T {
         // Stage 1: Image normalization
         IrisLogger.image.debug("Normalizing image from file: \(fileURL.lastPathComponent, privacy: .public)")
@@ -155,6 +203,16 @@ public actor IrisClient {
 
     #if canImport(UIKit)
     /// Parses a `UIImage` into the target `Decodable` type.
+    ///
+    /// - Parameters:
+    ///   - image: The `UIImage` to parse.
+    ///   - type: The `Decodable` type to decode the model response into.
+    /// - Returns: A fully populated instance of `T`.
+    /// - Throws: `IrisError.imageUnreadable` if the image cannot be normalized to JPEG.
+    ///           `IrisError.networkError` if a connectivity failure occurs.
+    ///           `IrisError.invalidAPIKey` if the API key is missing or rejected.
+    ///           `IrisError.modelFailure` if the model returns an error response.
+    ///           `IrisError.decodingFailed` if the model output cannot be decoded into `T`.
     public func parse<T: Decodable>(image: UIImage, as type: T.Type) async throws -> T {
         // Stage 1: Image normalization
         IrisLogger.image.debug("Normalizing UIImage")
@@ -202,6 +260,16 @@ public actor IrisClient {
 
     #if canImport(AppKit) && !canImport(UIKit)
     /// Parses an `NSImage` into the target `Decodable` type.
+    ///
+    /// - Parameters:
+    ///   - image: The `NSImage` to parse.
+    ///   - type: The `Decodable` type to decode the model response into.
+    /// - Returns: A fully populated instance of `T`.
+    /// - Throws: `IrisError.imageUnreadable` if the image cannot be normalized to JPEG.
+    ///           `IrisError.networkError` if a connectivity failure occurs.
+    ///           `IrisError.invalidAPIKey` if the API key is missing or rejected.
+    ///           `IrisError.modelFailure` if the model returns an error response.
+    ///           `IrisError.decodingFailed` if the model output cannot be decoded into `T`.
     public func parse<T: Decodable>(image: NSImage, as type: T.Type) async throws -> T {
         // Stage 1: Image normalization
         IrisLogger.image.debug("Normalizing NSImage")
