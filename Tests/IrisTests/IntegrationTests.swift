@@ -2,6 +2,17 @@ import Testing
 import Foundation
 @testable import Iris
 
+private let integrationAPIKey: String? = {
+    let raw = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"]
+    let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard let value = trimmed, !value.isEmpty else {
+        return nil
+    }
+    return value
+}()
+
+private let integrationEnabled = integrationAPIKey != nil
+
 extension Tag {
     @Tag static var integration: Self
 }
@@ -46,16 +57,16 @@ private func fixtureURL(_ name: String) throws -> URL {
 
 // MARK: - Integration tests
 
-@Suite("Integration", .tags(.integration))
+@Suite("integration", .tags(.integration))
 struct IntegrationTests {
 
-    private let apiKey: String? = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"]
+    private let apiKey: String? = integrationAPIKey
 
     @Test(
         "parse supermarket receipt extracts store name and total",
-        .enabled(if: ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] != nil)
+        .enabled(if: integrationEnabled)
     )
-    func parseSupermarketReceipt() async throws {
+    func integration_parseSupermarketReceipt() async throws {
         let key = try #require(apiKey)
         let url = try fixtureURL("supermarket-receipt.jpg")
         let iris = IrisClient(apiKey: key)
@@ -66,9 +77,9 @@ struct IntegrationTests {
 
     @Test(
         "parse restaurant receipt extracts restaurant name and total",
-        .enabled(if: ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] != nil)
+        .enabled(if: integrationEnabled)
     )
-    func parseRestaurantReceipt() async throws {
+    func integration_parseRestaurantReceipt() async throws {
         let key = try #require(apiKey)
         let url = try fixtureURL("restaurant-receipt.jpg")
         let iris = IrisClient(apiKey: key)
@@ -79,9 +90,9 @@ struct IntegrationTests {
 
     @Test(
         "parse service invoice extracts provider name and amount",
-        .enabled(if: ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] != nil)
+        .enabled(if: integrationEnabled)
     )
-    func parseServiceInvoice() async throws {
+    func integration_parseServiceInvoice() async throws {
         let key = try #require(apiKey)
         let url = try fixtureURL("invoice.jpg")
         let iris = IrisClient(apiKey: key)
@@ -91,16 +102,15 @@ struct IntegrationTests {
 
     @Test(
         "parse low-quality receipt returns nil for ambiguous Optional fields — not an error",
-        .enabled(if: ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] != nil)
+        .enabled(if: integrationEnabled)
     )
-    func parseLowQualityReceiptOptionalFieldsAreNil() async throws {
+    func integration_parseLowQualityReceiptOptionalFieldsAreNil() async throws {
         let key = try #require(apiKey)
         let url = try fixtureURL("low-quality-receipt.jpg")
         let iris = IrisClient(apiKey: key)
         // This must NOT throw — Optional fields return nil, not IrisError
         let result = try await iris.parse(fileURL: url, as: LowQualityReceipt.self)
-        // At minimum, verify that parsing completed without error
-        // Some fields will be nil because the image is low quality
-        _ = result  // result exists — no error thrown = test passes
+        // Verify ambiguous content yields nil in at least one Optional field.
+        #expect(result.storeName == nil || result.totalAmount == nil || result.items == nil)
     }
 }
