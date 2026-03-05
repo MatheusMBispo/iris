@@ -16,7 +16,7 @@ struct Receipt {
 
 let iris = IrisClient(apiKey: "sk-ant-...")
 let receipt = try await iris.parse(fileURL: receiptImageURL, as: Receipt.self)
-print(receipt.storeName ?? "Unknown store") // "Supermercado Pão de Açúcar"
+print(receipt.storeName ?? "Unknown store") // "Whole Foods Market"
 ```
 
 ```swift
