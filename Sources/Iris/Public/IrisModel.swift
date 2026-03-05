@@ -34,7 +34,7 @@ public struct IrisModel: Sendable {
                 let body = String(data: data, encoding: .utf8) ?? "Unknown error"
                 throw IrisError.modelFailure(message: body)
             }
-            let decoded = try JSONDecoder().decode(AnthropicResponse.self, from: data)
+            let decoded = try JSONDecoder.iris.decode(AnthropicResponse.self, from: data)
             guard let text = decoded.content.first(where: { $0.type == "text" })?.text else {
                 throw IrisError.modelFailure(message: "No text content in Anthropic response")
             }
@@ -115,3 +115,4 @@ private struct AnthropicResponse: Decodable {
         let text: String?
     }
 }
+

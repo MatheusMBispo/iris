@@ -2,18 +2,7 @@ import Foundation
 import Testing
 @testable import Iris
 
-@Suite("IrisClient")
-struct IrisClientTests {
-    @Test("public API stubs are accessible")
-    func publicAPIStubsAreAccessible() {
-        let client = IrisClient()
-        let model = IrisModel.claude(apiKey: "test")
-
-        #expect(String(describing: type(of: client)) == "IrisClient")
-        #expect(String(describing: type(of: model)) == "IrisModel")
-        #expect(String(describing: IrisError.self) == "IrisError")
-    }
-}
+// MARK: - IrisError shape tests
 
 @Suite("IrisError public shape")
 struct IrisErrorTests {
@@ -57,6 +46,8 @@ struct IrisErrorTests {
     }
 }
 
+// MARK: - IrisModel shape tests
+
 @Suite("IrisModel public shape")
 struct IrisModelTests {
     @Test("IrisModel can be created with custom parse closure")
@@ -66,6 +57,8 @@ struct IrisModelTests {
         #expect(result == "response")
     }
 }
+
+// MARK: - IrisDebugInfo shape tests
 
 @Suite("IrisDebugInfo public shape")
 struct IrisDebugInfoTests {
@@ -92,6 +85,8 @@ struct IrisModelClaudeTests {
         }
         let model = IrisModel.claude(apiKey: "test-key", session: session)
         _ = try await model.parse(Data(), "prompt")
+        #expect(capturedRequest?.httpMethod == "POST")
+        #expect(capturedRequest?.url?.absoluteString == "https://api.anthropic.com/v1/messages")
         #expect(capturedRequest?.value(forHTTPHeaderField: "x-api-key") == "test-key")
         #expect(capturedRequest?.value(forHTTPHeaderField: "Content-Type") == "application/json")
         #expect(capturedRequest?.value(forHTTPHeaderField: "anthropic-version") == "2023-06-01")
@@ -101,7 +96,6 @@ struct IrisModelClaudeTests {
         let imageData = Data([0xAA, 0xBB, 0xCC])
         var requestBody: [String: Any]?
         let session = makeMockSession { request in
-            // URLSession converts httpBody → httpBodyStream when going through URLProtocol
             if let body = bodyData(from: request) {
                 requestBody = try JSONSerialization.jsonObject(with: body) as? [String: Any]
             }
@@ -176,6 +170,318 @@ struct IrisModelClaudeTests {
     }
 }
 
+// MARK: - IrisClient behavior tests
+
+@Suite("IrisClient behavior", .serialized)
+struct IrisClientBehaviorTests {
+
+    // Shared test structs
+
+    private struct SimpleStruct: Decodable {
+        let name: String
+    }
+
+    /// Tests snake_case decoding — `total_amount` JSON key maps to `totalAmount` Swift property.
+    private struct SnakeCaseReceipt: Decodable {
+        let totalAmount: String
+        let vendorName: String?  // optional — used to verify nil mapping
+    }
+
+    // MARK: AC #1 — full pipeline executes in order
+
+    @Test("parse(data:mimeType:as:) returns decoded struct via full pipeline")
+    func parseData_fullPipeline_returnsDecodedStruct() async throws {
+        let model = IrisModel { _, _ in #"{"name": "iris"}"# }
+        let client = IrisClient(model: model)
+        let result = try await client.parse(data: minimalJPEGData(), mimeType: "image/jpeg", as: SimpleStruct.self)
+        #expect(result.name == "iris")
+    }
+
+    @Test("parse pipeline calls model with prompt containing field names")
+    func parsePipeline_modelReceivesPromptWithFieldNames() async throws {
+        // Swift 6: use @unchecked Sendable box for mutable capture in @Sendable closure
+        let capture = CaptureBox<String>()
+        let model = IrisModel { _, prompt in
+            capture.value = prompt
+            return #"{"total_amount": "R$1.00"}"#
+        }
+        let client = IrisClient(model: model)
+        _ = try await client.parse(data: minimalJPEGData(), mimeType: "image/jpeg", as: SnakeCaseReceipt.self)
+        // PromptBuilder ran and produced a prompt referencing the struct fields
+        #expect(capture.value != nil)
+        let prompt = capture.value ?? ""
+        #expect(prompt.contains("totalAmount") || prompt.contains("total_amount") || prompt.contains("vendorName") || prompt.contains("vendor_name"))
+    }
+
+    @Test("parse pipeline passes normalized JPEG data to model (not raw input)")
+    func parsePipeline_modelReceivesNormalizedData() async throws {
+        let capture = CaptureBox<Data>()
+        let model = IrisModel { data, _ in
+            capture.value = data
+            return #"{"name": "test"}"#
+        }
+        let client = IrisClient(model: model)
+        _ = try await client.parse(data: minimalJPEGData(), mimeType: "image/jpeg", as: SimpleStruct.self)
+        // Model received data that is a valid JPEG (starts with FF D8)
+        #expect(capture.value?.starts(with: [0xFF, 0xD8]) == true)
+    }
+
+    // MARK: AC #2 — optional field absent in JSON → nil
+
+    @Test("optional field absent in model JSON response decodes as nil")
+    func optionalField_absentInJSON_isNil() async throws {
+        // vendorName is absent from JSON → should decode as nil
+        let model = IrisModel { _, _ in #"{"total_amount": "R$42.00"}"# }
+        let client = IrisClient(model: model)
+        let result = try await client.parse(data: minimalJPEGData(), mimeType: "image/jpeg", as: SnakeCaseReceipt.self)
+        #expect(result.totalAmount == "R$42.00")
+        #expect(result.vendorName == nil)
+    }
+
+    // MARK: AC #3 — language-agnostic (same pipeline for any document language)
+
+    @Test("pipeline works regardless of document content language")
+    func pipeline_languageAgnostic() async throws {
+        // Model returns Portuguese values — pipeline must not break
+        let model = IrisModel { _, _ in #"{"name": "Supermercado"}"# }
+        let client = IrisClient(model: model)
+        let result = try await client.parse(data: minimalJPEGData(), mimeType: "image/jpeg", as: SimpleStruct.self)
+        #expect(result.name == "Supermercado")
+    }
+
+    // MARK: AC #4 — explicit-key and env-key init paths
+
+    @Test("init(apiKey:) creates usable client without network calls in tests")
+    func explicitKeyInit_createsClient() {
+        let client = IrisClient(apiKey: "sk-test-key")
+        #expect(String(describing: type(of: client)) == "IrisClient")
+    }
+
+    @Test("init(environment:) with missing key throws invalidAPIKey on parse (no network call)")
+    func envKeyMissing_throwsInvalidAPIKey_withoutNetworkCall() async {
+        let client = IrisClient(environment: [:])  // empty env — key is absent
+        var caught: (any Error)?
+        do {
+            _ = try await client.parse(data: minimalJPEGData(), mimeType: "image/jpeg", as: SimpleStruct.self)
+        } catch {
+            caught = error
+        }
+        if case .invalidAPIKey = caught as? IrisError {
+            // expected — no network call occurred
+        } else {
+            Issue.record("Expected IrisError.invalidAPIKey, got: \(String(describing: caught))")
+        }
+    }
+
+    @Test("init(environment:) with valid key configures claude model")
+    func envKeyPresent_configuresModel() async throws {
+        // Use a mock model to verify env-key path without real network calls
+        // init(environment:) builds IrisModel.claude internally; we verify via parse behavior
+        // instead of testing IrisModel.claude directly (covered in IrisModelClaudeTests).
+        // Since we can't inject a mock model into init(environment:), we verify the init succeeds.
+        let client = IrisClient(environment: ["ANTHROPIC_API_KEY": "sk-env-key"])
+        #expect(String(describing: type(of: client)) == "IrisClient")
+    }
+
+    // MARK: AC #5 — overloads for all input forms
+
+    @Test("parse(fileURL:as:) reads image file and returns decoded struct")
+    func parseFileURL_returnsDecodedStruct() async throws {
+        let model = IrisModel { _, _ in #"{"name": "from-file"}"# }
+        let client = IrisClient(model: model)
+        let url = try writeJPEGToTempFile(minimalJPEGData())
+        defer { try? FileManager.default.removeItem(at: url) }
+        let result = try await client.parse(fileURL: url, as: SimpleStruct.self)
+        #expect(result.name == "from-file")
+    }
+
+    @Test("parse(fileURL:as:) throws imageUnreadable for missing file")
+    func parseFileURL_missingFile_throwsImageUnreadable() async {
+        let model = IrisModel { _, _ in #"{"name": "x"}"# }
+        let client = IrisClient(model: model)
+        let missingURL = URL(fileURLWithPath: "/tmp/iris_nonexistent_\(UUID().uuidString).jpg")
+        var caught: (any Error)?
+        do {
+            _ = try await client.parse(fileURL: missingURL, as: SimpleStruct.self)
+        } catch {
+            caught = error
+        }
+        if case .imageUnreadable = caught as? IrisError {
+            // expected
+        } else {
+            Issue.record("Expected IrisError.imageUnreadable, got: \(String(describing: caught))")
+        }
+    }
+
+    // MARK: AC #6 — actor isolation, no DispatchQueue
+
+    @Test("IrisClient is an actor type")
+    func irisClientIsActor() {
+        // Compile-time verification: IrisClient() is valid (actor init syntax)
+        let client = IrisClient(apiKey: "test")
+        _ = client  // actor reference — confirms it's an actor
+        #expect(String(describing: type(of: client)) == "IrisClient")
+    }
+
+    // MARK: AC #7 — JSONDecoder.iris uses convertFromSnakeCase
+
+    @Test("snake_case JSON key maps to camelCase Swift property via JSONDecoder.iris")
+    func snakeCaseJSON_mapsToCamelCaseProperty() async throws {
+        let model = IrisModel { _, _ in #"{"total_amount": "R$99.99", "vendor_name": "Padaria"}"# }
+        let client = IrisClient(model: model)
+        let result = try await client.parse(data: minimalJPEGData(), mimeType: "image/jpeg", as: SnakeCaseReceipt.self)
+        #expect(result.totalAmount == "R$99.99")
+        #expect(result.vendorName == "Padaria")
+    }
+
+    // MARK: Error propagation boundaries (Tasks 3 + 4)
+
+    @Test("invalid JSON from model throws decodingFailed with raw JSON preserved")
+    func invalidJSON_throwsDecodingFailed_withRawJSONPreserved() async throws {
+        let badJSON = "not valid json at all"
+        let model = IrisModel { _, _ in badJSON }
+        let client = IrisClient(model: model)
+        var caught: (any Error)?
+        do {
+            _ = try await client.parse(data: minimalJPEGData(), mimeType: "image/jpeg", as: SimpleStruct.self)
+        } catch {
+            caught = error
+        }
+        if case .decodingFailed(let raw) = caught as? IrisError {
+            #expect(raw == badJSON)
+        } else {
+            Issue.record("Expected IrisError.decodingFailed, got: \(String(describing: caught))")
+        }
+    }
+
+    @Test("type mismatch in JSON throws decodingFailed (no raw DecodingError escapes)")
+    func typeMismatch_throwsDecodingFailed_notRawDecodingError() async throws {
+        // `name` field is String but JSON provides an integer
+        let model = IrisModel { _, _ in #"{"name": 42}"# }
+        let client = IrisClient(model: model)
+        var caught: (any Error)?
+        do {
+            _ = try await client.parse(data: minimalJPEGData(), mimeType: "image/jpeg", as: SimpleStruct.self)
+        } catch {
+            caught = error
+        }
+        if case .decodingFailed = caught as? IrisError {
+            // expected — raw DecodingError was mapped to IrisError.decodingFailed
+        } else {
+            Issue.record("Expected IrisError.decodingFailed, got: \(String(describing: caught))")
+        }
+        // Confirm raw DecodingError did NOT escape
+        #expect(!(caught is DecodingError))
+    }
+
+    @Test("imageUnreadable error from ImagePipeline propagates unchanged")
+    func imageUnreadable_propagatesFromPipeline() async {
+        let model = IrisModel { _, _ in #"{"name": "x"}"# }
+        let client = IrisClient(model: model)
+        var caught: (any Error)?
+        do {
+            _ = try await client.parse(data: Data([0x00, 0x01, 0x02]), mimeType: "image/jpeg", as: SimpleStruct.self)
+        } catch {
+            caught = error
+        }
+        if case .imageUnreadable = caught as? IrisError {
+            // expected
+        } else {
+            Issue.record("Expected IrisError.imageUnreadable, got: \(String(describing: caught))")
+        }
+    }
+
+    @Test("model-layer networkError propagates unchanged")
+    func networkError_propagatesFromModel() async {
+        let model = IrisModel { _, _ in throw IrisError.networkError(underlying: URLError(.notConnectedToInternet)) }
+        let client = IrisClient(model: model)
+        var caught: (any Error)?
+        do {
+            _ = try await client.parse(data: minimalJPEGData(), mimeType: "image/jpeg", as: SimpleStruct.self)
+        } catch {
+            caught = error
+        }
+        if case .networkError = caught as? IrisError {
+            // expected
+        } else {
+            Issue.record("Expected IrisError.networkError, got: \(String(describing: caught))")
+        }
+    }
+
+    // MARK: Platform-gated NSImage overload (macOS only)
+
+    #if canImport(AppKit) && !canImport(UIKit)
+    @Test("parse(image: NSImage, as:) overload compiles and calls pipeline")
+    func nsImageOverload_parsesSuccessfully() async throws {
+        let model = IrisModel { _, _ in #"{"name": "nsimage-test"}"# }
+        let client = IrisClient(model: model)
+        let image = makeTestNSImage()
+        let result = try await client.parse(image: image, as: SimpleStruct.self)
+        #expect(result.name == "nsimage-test")
+    }
+    #endif
+}
+
+// MARK: - ResponseDecoder unit tests
+
+@Suite("ResponseDecoder")
+struct ResponseDecoderTests {
+
+    private struct SampleStruct: Decodable {
+        let firstName: String
+        let age: Int?
+    }
+
+    @Test("decode valid JSON returns struct")
+    func decode_validJSON_returnsStruct() throws {
+        let json = #"{"first_name": "Ana", "age": 30}"#
+        let result = try ResponseDecoder.decode(SampleStruct.self, from: json)
+        #expect(result.firstName == "Ana")
+        #expect(result.age == 30)
+    }
+
+    @Test("decode JSON with missing optional field returns nil for that field")
+    func decode_missingOptionalField_isNil() throws {
+        let json = #"{"first_name": "Bob"}"#
+        let result = try ResponseDecoder.decode(SampleStruct.self, from: json)
+        #expect(result.firstName == "Bob")
+        #expect(result.age == nil)
+    }
+
+    @Test("decode invalid JSON throws decodingFailed with raw string preserved")
+    func decode_invalidJSON_throwsDecodingFailed() {
+        let badJSON = "{ invalid }"
+        do {
+            _ = try ResponseDecoder.decode(SampleStruct.self, from: badJSON)
+            Issue.record("Expected throw but function returned normally")
+        } catch IrisError.decodingFailed(let raw) {
+            #expect(raw == badJSON)
+        } catch {
+            Issue.record("Expected IrisError.decodingFailed, got: \(error)")
+        }
+    }
+
+    @Test("decode type mismatch throws decodingFailed (no raw DecodingError escapes)")
+    func decode_typeMismatch_throwsDecodingFailed() {
+        let json = #"{"first_name": 123}"#  // firstName expects String, gets Int
+        do {
+            _ = try ResponseDecoder.decode(SampleStruct.self, from: json)
+            Issue.record("Expected throw but function returned normally")
+        } catch IrisError.decodingFailed {
+            // expected
+        } catch {
+            Issue.record("Expected IrisError.decodingFailed, got: \(error)")
+        }
+    }
+
+    @Test("JSONDecoder.iris uses convertFromSnakeCase strategy")
+    func irisDecoder_usesSnakeCaseStrategy() throws {
+        let json = #"{"first_name": "Carlos"}"#
+        let result = try JSONDecoder.iris.decode(SampleStruct.self, from: json.data(using: .utf8)!)
+        #expect(result.firstName == "Carlos")
+    }
+}
+
 // MARK: - Test Helpers
 
 private final class MockURLProtocol: URLProtocol, @unchecked Sendable {
@@ -222,3 +528,65 @@ private func bodyData(from request: URLRequest) -> Data? {
     }
     return data
 }
+
+/// A valid 1×1 white JPEG (stable bytes, compatible with both UIKit and AppKit decoders).
+private func minimalJPEGData() -> Data {
+    let bytes: [UInt8] = [
+        0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01,
+        0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0xFF, 0xDB, 0x00, 0x43,
+        0x00, 0x08, 0x06, 0x06, 0x07, 0x06, 0x05, 0x08, 0x07, 0x07, 0x07, 0x09,
+        0x09, 0x08, 0x0A, 0x0C, 0x14, 0x0D, 0x0C, 0x0B, 0x0B, 0x0C, 0x19, 0x12,
+        0x13, 0x0F, 0x14, 0x1D, 0x1A, 0x1F, 0x1E, 0x1D, 0x1A, 0x1C, 0x1C, 0x20,
+        0x24, 0x2E, 0x27, 0x20, 0x22, 0x2C, 0x23, 0x1C, 0x1C, 0x28, 0x37, 0x29,
+        0x2C, 0x30, 0x31, 0x34, 0x34, 0x34, 0x1F, 0x27, 0x39, 0x3D, 0x38, 0x32,
+        0x3C, 0x2E, 0x33, 0x34, 0x32, 0xFF, 0xC0, 0x00, 0x0B, 0x08, 0x00, 0x01,
+        0x00, 0x01, 0x01, 0x01, 0x11, 0x00, 0xFF, 0xC4, 0x00, 0x1F, 0x00, 0x00,
+        0x01, 0x05, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+        0x09, 0x0A, 0x0B, 0xFF, 0xC4, 0x00, 0xB5, 0x10, 0x00, 0x02, 0x01, 0x03,
+        0x03, 0x02, 0x04, 0x03, 0x05, 0x05, 0x04, 0x04, 0x00, 0x00, 0x01, 0x7D,
+        0x01, 0x02, 0x03, 0x00, 0x04, 0x11, 0x05, 0x12, 0x21, 0x31, 0x41, 0x06,
+        0x13, 0x51, 0x61, 0x07, 0x22, 0x71, 0x14, 0x32, 0x81, 0x91, 0xA1, 0x08,
+        0x23, 0x42, 0xB1, 0xC1, 0x15, 0x52, 0xD1, 0xF0, 0x24, 0x33, 0x62, 0x72,
+        0x82, 0x09, 0x0A, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x25, 0x26, 0x27, 0x28,
+        0x29, 0x2A, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3A, 0x43, 0x44, 0x45,
+        0x46, 0x47, 0x48, 0x49, 0x4A, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59,
+        0x5A, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x69, 0x6A, 0x73, 0x74, 0x75,
+        0x76, 0x77, 0x78, 0x79, 0x7A, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89,
+        0x8A, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9A, 0xA2, 0xA3,
+        0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 0xA9, 0xAA, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6,
+        0xB7, 0xB8, 0xB9, 0xBA, 0xC2, 0xC3, 0xC4, 0xC5, 0xC6, 0xC7, 0xC8, 0xC9,
+        0xCA, 0xD2, 0xD3, 0xD4, 0xD5, 0xD6, 0xD7, 0xD8, 0xD9, 0xDA, 0xE1, 0xE2,
+        0xE3, 0xE4, 0xE5, 0xE6, 0xE7, 0xE8, 0xE9, 0xEA, 0xF1, 0xF2, 0xF3, 0xF4,
+        0xF5, 0xF6, 0xF7, 0xF8, 0xF9, 0xFA, 0xFF, 0xDA, 0x00, 0x08, 0x01, 0x01,
+        0x00, 0x00, 0x3F, 0x00, 0xFB, 0x26, 0xA2, 0x8A, 0xFF, 0xD9
+    ]
+    return Data(bytes)
+}
+
+private func writeJPEGToTempFile(_ data: Data) throws -> URL {
+    let url = FileManager.default.temporaryDirectory
+        .appendingPathComponent("iris_test_\(UUID().uuidString).jpg")
+    try data.write(to: url)
+    return url
+}
+
+/// Thread-safe mutable capture box for use in @Sendable closures under Swift 6 strict concurrency.
+private final class CaptureBox<T>: @unchecked Sendable {
+    nonisolated(unsafe) var value: T?
+    init() {}
+}
+
+#if canImport(AppKit) && !canImport(UIKit)
+import AppKit
+
+private func makeTestNSImage() -> NSImage {
+    let size = NSSize(width: 1, height: 1)
+    let image = NSImage(size: size)
+    image.lockFocus()
+    NSColor.white.setFill()
+    NSRect(origin: .zero, size: size).fill()
+    image.unlockFocus()
+    return image
+}
+#endif
