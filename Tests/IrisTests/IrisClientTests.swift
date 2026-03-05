@@ -1,6 +1,9 @@
 import Foundation
 import Testing
 @testable import Iris
+#if canImport(Darwin)
+import Darwin
+#endif
 
 // MARK: - IrisError shape tests
 
@@ -55,6 +58,97 @@ struct IrisModelTests {
         let model = IrisModel { _, _ in "response" }
         let result = try await model.parse(Data(), "prompt")
         #expect(result == "response")
+    }
+}
+
+// MARK: - IrisModel.mock tests
+
+@Suite("IrisModel.mock")
+struct IrisModelMockTests {
+    private struct OptionalReceipt: Decodable {
+        let merchant: String?
+        let total: Double?
+        let date: String?
+    }
+
+    @Test("mock returns empty JSON object without network call")
+    func mockReturnsEmptyJSON() async throws {
+        let result = try await IrisModel.mock.parse(Data(), "test prompt")
+        #expect(result == "{}")
+    }
+
+    @Test("mock decodes into all-Optional struct producing all-nil values")
+    func mockDecodesIntoAllOptionalStruct() async throws {
+        let iris = IrisClient(model: .mock)
+        let receipt = try await iris.parse(data: minimalJPEGData(), mimeType: "image/jpeg", as: OptionalReceipt.self)
+        #expect(receipt.merchant == nil)
+        #expect(receipt.total == nil)
+        #expect(receipt.date == nil)
+    }
+}
+
+// MARK: - Custom model injection tests
+
+@Suite("Custom Model Injection")
+struct CustomModelInjectionTests {
+    private struct LabelInfo: Decodable {
+        let label: String
+    }
+
+    private struct ValueInfo: Decodable {
+        let value: Int
+    }
+
+    private struct Doc: Decodable {
+        let title: String?
+    }
+
+    @Test("init(model:) uses provided model instead of claude")
+    func initModelUsesProvidedModel() async throws {
+        let customModel = IrisModel { _, _ in #"{"label":"injected"}"# }
+        let iris = IrisClient(model: customModel)
+        let result = try await iris.parse(data: minimalJPEGData(), mimeType: "image/jpeg", as: LabelInfo.self)
+        #expect(result.label == "injected")
+    }
+
+    @Test("init(apiKey:model:) uses provided model, ignores apiKey for calls")
+    func initAPIKeyModelUsesProvidedModel() async throws {
+        let customModel = IrisModel { _, _ in #"{"value":42}"# }
+        let iris = IrisClient(apiKey: "unused-key", model: customModel)
+        let result = try await iris.parse(data: minimalJPEGData(), mimeType: "image/jpeg", as: ValueInfo.self)
+        #expect(result.value == 42)
+    }
+
+    @Test("custom model closure receives normalized imageData and prompt")
+    func customModelReceivesCorrectArguments() async throws {
+        let dataBox = CaptureBox<Data>()
+        let promptBox = CaptureBox<String>()
+
+        let customModel = IrisModel { data, prompt in
+            await dataBox.set(data)
+            await promptBox.set(prompt)
+            return "{}"
+        }
+
+        let iris = IrisClient(model: customModel)
+        _ = try await iris.parse(data: minimalJPEGData(), mimeType: "image/jpeg", as: Doc.self)
+
+        let capturedData = await dataBox.get()
+        let capturedPrompt = await promptBox.get()
+        #expect(capturedData != nil)
+        #expect(capturedData?.starts(with: [0xFF, 0xD8]) == true)
+        #expect(capturedPrompt != nil)
+    }
+
+    @Test("parse call syntax is identical regardless of model used")
+    func parseSyntaxUnchanged() async throws {
+        let mockIris = IrisClient(model: .mock)
+        let customIris = IrisClient(model: IrisModel { _, _ in "{}" })
+        let apiKeyMockIris = IrisClient(apiKey: "fake-key", model: .mock)
+
+        _ = try await mockIris.parse(data: minimalJPEGData(), mimeType: "image/jpeg", as: Doc.self)
+        _ = try await customIris.parse(data: minimalJPEGData(), mimeType: "image/jpeg", as: Doc.self)
+        _ = try await apiKeyMockIris.parse(data: minimalJPEGData(), mimeType: "image/jpeg", as: Doc.self)
     }
 }
 
@@ -199,17 +293,16 @@ struct IrisClientBehaviorTests {
 
     @Test("parse pipeline calls model with prompt containing field names")
     func parsePipeline_modelReceivesPromptWithFieldNames() async throws {
-        // Swift 6: use @unchecked Sendable box for mutable capture in @Sendable closure
         let capture = CaptureBox<String>()
         let model = IrisModel { _, prompt in
-            capture.value = prompt
+            await capture.set(prompt)
             return #"{"total_amount": "R$1.00"}"#
         }
         let client = IrisClient(model: model)
         _ = try await client.parse(data: minimalJPEGData(), mimeType: "image/jpeg", as: SnakeCaseReceipt.self)
         // PromptBuilder ran and produced a prompt referencing the struct fields
-        #expect(capture.value != nil)
-        let prompt = capture.value ?? ""
+        let prompt = await capture.get() ?? ""
+        #expect(!prompt.isEmpty)
         #expect(prompt.contains("totalAmount") || prompt.contains("total_amount") || prompt.contains("vendorName") || prompt.contains("vendor_name"))
     }
 
@@ -217,13 +310,14 @@ struct IrisClientBehaviorTests {
     func parsePipeline_modelReceivesNormalizedData() async throws {
         let capture = CaptureBox<Data>()
         let model = IrisModel { data, _ in
-            capture.value = data
+            await capture.set(data)
             return #"{"name": "test"}"#
         }
         let client = IrisClient(model: model)
         _ = try await client.parse(data: minimalJPEGData(), mimeType: "image/jpeg", as: SimpleStruct.self)
         // Model received data that is a valid JPEG (starts with FF D8)
-        #expect(capture.value?.starts(with: [0xFF, 0xD8]) == true)
+        let capturedData = await capture.get()
+        #expect(capturedData?.starts(with: [0xFF, 0xD8]) == true)
     }
 
     // MARK: AC #2 — optional field absent in JSON → nil
@@ -281,6 +375,32 @@ struct IrisClientBehaviorTests {
         // Since we can't inject a mock model into init(environment:), we verify the init succeeds.
         let client = IrisClient(environment: ["ANTHROPIC_API_KEY": "sk-env-key"])
         #expect(String(describing: type(of: client)) == "IrisClient")
+    }
+
+    @Test("public init() with missing env key throws invalidAPIKey on parse")
+    func publicInit_missingEnvKey_throwsInvalidAPIKey() async {
+        await withEnvironmentValue("ANTHROPIC_API_KEY", nil) {
+            let client = IrisClient()
+            var caught: (any Error)?
+            do {
+                _ = try await client.parse(data: minimalJPEGData(), mimeType: "image/jpeg", as: SimpleStruct.self)
+            } catch {
+                caught = error
+            }
+            if case .invalidAPIKey = caught as? IrisError {
+                // expected
+            } else {
+                Issue.record("Expected IrisError.invalidAPIKey, got: \(String(describing: caught))")
+            }
+        }
+    }
+
+    @Test("public init() reads ANTHROPIC_API_KEY when present")
+    func publicInit_readsEnvironmentKey() async {
+        await withEnvironmentValue("ANTHROPIC_API_KEY", "sk-public-env") {
+            let client = IrisClient()
+            #expect(String(describing: type(of: client)) == "IrisClient")
+        }
     }
 
     // MARK: AC #5 — overloads for all input forms
@@ -420,6 +540,148 @@ struct IrisClientBehaviorTests {
         #expect(result.name == "nsimage-test")
     }
     #endif
+
+    #if canImport(UIKit)
+    @Test("parse(image: UIImage, as:) overload compiles and calls pipeline")
+    func uiImageOverload_parsesSuccessfully() async throws {
+        let model = IrisModel { _, _ in #"{"name": "uiimage-test"}"# }
+        let client = IrisClient(model: model)
+        let image = makeTestUIImage()
+        let result = try await client.parse(image: image, as: SimpleStruct.self)
+        #expect(result.name == "uiimage-test")
+    }
+    #endif
+}
+
+// MARK: - Debug Mode Tests
+
+@Suite("Debug Mode")
+struct DebugModeTests {
+
+    @Test("debugMode false (default): lastDebugInfo is nil after parse")
+    func debugModeFalseLastDebugInfoIsNil() async throws {
+        struct Receipt: Decodable { var total: Double? }
+        let iris = IrisClient(model: .mock)  // debugMode omitted → false
+        _ = try await iris.parse(data: minimalJPEGData(), mimeType: "image/jpeg", as: Receipt.self)
+        let info = await iris.lastDebugInfo
+        #expect(info == nil)
+    }
+
+    @Test("debugMode true: lastDebugInfo is populated after successful parse")
+    func debugModeTruePopulatesLastDebugInfo() async throws {
+        struct Receipt: Decodable { var total: Double? }
+        let iris = IrisClient(model: .mock, debugMode: true)
+        _ = try await iris.parse(data: minimalJPEGData(), mimeType: "image/jpeg", as: Receipt.self)
+        let info = await iris.lastDebugInfo
+        #expect(info != nil)
+    }
+
+    @Test("debugMode true: rawJSON contains the model's raw output")
+    func debugModeTrueRawJSONMatchesMockOutput() async throws {
+        struct Receipt: Decodable { var total: Double? }
+        let iris = IrisClient(model: .mock, debugMode: true)  // mock returns "{}"
+        _ = try await iris.parse(data: minimalJPEGData(), mimeType: "image/jpeg", as: Receipt.self)
+        let info = await iris.lastDebugInfo
+        #expect(info?.rawJSON == "{}")
+    }
+
+    @Test("debugMode true: ocrText equals rawJSON (single-pass vision model)")
+    func debugModeTrueOcrTextMatchesRawJSON() async throws {
+        struct Receipt: Decodable { var total: Double? }
+        let iris = IrisClient(model: .mock, debugMode: true)
+        _ = try await iris.parse(data: minimalJPEGData(), mimeType: "image/jpeg", as: Receipt.self)
+        let info = await iris.lastDebugInfo
+        #expect(info?.ocrText == info?.rawJSON)
+    }
+
+    @Test("debugMode true: lastDebugInfo captured even when decoding fails")
+    func debugModeCapturedOnDecodingFailure() async throws {
+        // Model returns JSON with a required non-Optional field missing → decodingFailed
+        struct StrictReceipt: Decodable { var merchant: String }  // non-Optional → fails on "{}"
+        let customJSON = #"{"unexpected_field": "value"}"#
+        let model = IrisModel { _, _ in customJSON }
+        let iris = IrisClient(model: model, debugMode: true)
+        do {
+            _ = try await iris.parse(data: minimalJPEGData(), mimeType: "image/jpeg", as: StrictReceipt.self)
+            Issue.record("Expected decodingFailed to be thrown")
+        } catch IrisError.decodingFailed(raw: _) {
+            // Expected path — lastDebugInfo is captured BEFORE ResponseDecoder.decode throws
+            let info = await iris.lastDebugInfo
+            #expect(info != nil)
+            #expect(info?.rawJSON == customJSON)
+        }
+    }
+
+    @Test("debugMode true: subsequent parse overwrites lastDebugInfo")
+    func debugModeSubsequentParseUpdatesLastDebugInfo() async throws {
+        struct Receipt: Decodable { var total: Double? }
+        let firstJSON = #"{"total": 9.90}"#
+        let secondJSON = #"{"total": 42.0}"#
+        let counter = CaptureBox<Int>()
+        let model = IrisModel { _, _ in
+            let count = (await counter.get() ?? 0) + 1
+            await counter.set(count)
+            return count == 1 ? firstJSON : secondJSON
+        }
+        let iris = IrisClient(model: model, debugMode: true)
+        _ = try? await iris.parse(data: minimalJPEGData(), mimeType: "image/jpeg", as: Receipt.self)
+        _ = try? await iris.parse(data: minimalJPEGData(), mimeType: "image/jpeg", as: Receipt.self)
+        let info = await iris.lastDebugInfo
+        #expect(info?.rawJSON == secondJSON)  // second call overwrites first
+    }
+
+    @Test("debugMode true: model error updates lastDebugInfo with error details")
+    func debugModeModelErrorUpdatesLastDebugInfo() async throws {
+        struct Receipt: Decodable { var total: Double? }
+        // First call succeeds, second throws network error
+        let firstJSON = #"{"total": 5.0}"#
+        let counter = CaptureBox<Int>()
+        let model = IrisModel { _, _ in
+            let count = (await counter.get() ?? 0) + 1
+            await counter.set(count)
+            if count == 1 { return firstJSON }
+            throw IrisError.networkError(underlying: URLError(.notConnectedToInternet))
+        }
+        let iris = IrisClient(model: model, debugMode: true)
+        _ = try? await iris.parse(data: minimalJPEGData(), mimeType: "image/jpeg", as: Receipt.self)
+        _ = try? await iris.parse(data: minimalJPEGData(), mimeType: "image/jpeg", as: Receipt.self)
+        // After model error: debug info reflects the latest failure details
+        let info = await iris.lastDebugInfo
+        #expect(info?.rawJSON != firstJSON)
+        #expect(info?.rawJSON.isEmpty == false)
+        #expect(info?.ocrText == info?.rawJSON)
+    }
+
+    @Test("debugMode true with init(apiKey:model:debugMode:) variant")
+    func debugModeViaApiKeyInit() async throws {
+        // Verifies the apiKey init accepts debugMode
+        struct Receipt: Decodable { var total: Double? }
+        let iris = IrisClient(apiKey: "fake-key", model: .mock, debugMode: true)
+        _ = try await iris.parse(data: minimalJPEGData(), mimeType: "image/jpeg", as: Receipt.self)
+        let info = await iris.lastDebugInfo
+        #expect(info != nil)
+    }
+
+    @Test("debugMode false with all init variants produces nil lastDebugInfo")
+    func debugModeFalseAllInits() async throws {
+        struct Receipt: Decodable { var total: Double? }
+        // All three public variants without explicit debugMode
+        let iris1 = IrisClient(model: .mock)
+        let iris2 = IrisClient(model: .mock, retryPolicy: .none)
+        let iris3 = IrisClient(apiKey: "key", model: .mock)
+        for iris in [iris1, iris2, iris3] {
+            _ = try await iris.parse(data: minimalJPEGData(), mimeType: "image/jpeg", as: Receipt.self)
+            let info = await iris.lastDebugInfo
+            #expect(info == nil)
+        }
+
+        await withEnvironmentValue("ANTHROPIC_API_KEY", nil) {
+            let envClient = IrisClient()
+            _ = try? await envClient.parse(data: minimalJPEGData(), mimeType: "image/jpeg", as: Receipt.self)
+            let envInfo = await envClient.lastDebugInfo
+            #expect(envInfo == nil)
+        }
+    }
 }
 
 // MARK: - ResponseDecoder unit tests
@@ -484,7 +746,7 @@ struct ResponseDecoderTests {
 
 // MARK: - Test Helpers
 
-private final class MockURLProtocol: URLProtocol, @unchecked Sendable {
+private final class MockURLProtocol: URLProtocol {
     nonisolated(unsafe) static var requestHandler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
 
     override class func canInit(with request: URLRequest) -> Bool { true }
@@ -571,10 +833,35 @@ private func writeJPEGToTempFile(_ data: Data) throws -> URL {
     return url
 }
 
-/// Thread-safe mutable capture box for use in @Sendable closures under Swift 6 strict concurrency.
-private final class CaptureBox<T>: @unchecked Sendable {
-    nonisolated(unsafe) var value: T?
-    init() {}
+private func withEnvironmentValue(_ key: String, _ value: String?, operation: () async -> Void) async {
+    let previous = ProcessInfo.processInfo.environment[key]
+    if let value {
+        setenv(key, value, 1)
+    } else {
+        unsetenv(key)
+    }
+
+    defer {
+        if let previous {
+            setenv(key, previous, 1)
+        } else {
+            unsetenv(key)
+        }
+    }
+
+    await operation()
+}
+
+private actor CaptureBox<T> {
+    private var value: T?
+
+    func set(_ newValue: T) {
+        value = newValue
+    }
+
+    func get() -> T? {
+        value
+    }
 }
 
 #if canImport(AppKit) && !canImport(UIKit)
@@ -588,5 +875,17 @@ private func makeTestNSImage() -> NSImage {
     NSRect(origin: .zero, size: size).fill()
     image.unlockFocus()
     return image
+}
+#endif
+
+#if canImport(UIKit)
+import UIKit
+
+private func makeTestUIImage() -> UIImage {
+    let renderer = UIGraphicsImageRenderer(size: CGSize(width: 1, height: 1))
+    return renderer.image { context in
+        context.cgContext.setFillColor(UIColor.white.cgColor)
+        context.cgContext.fill(CGRect(x: 0, y: 0, width: 1, height: 1))
+    }
 }
 #endif
