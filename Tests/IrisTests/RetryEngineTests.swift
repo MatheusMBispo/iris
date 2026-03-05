@@ -134,4 +134,48 @@ struct RetryEngineTests {
         } catch {}
         #expect(await receivedAttempts.get() == [1, 2, 3])
     }
+
+    // MARK: - RetryPolicy.exponential factory tests
+
+    @Test("exponential — does NOT retry decodingFailed (exits guard before sleep)")
+    func exponential_doesNotRetryDecodingFailed() async {
+        let callCount = CaptureBox(0)
+        let policy = RetryPolicy.exponential(maxAttempts: 3)
+        do {
+            _ = try await RetryEngine.execute(policy: policy) {
+                let current = await callCount.get()
+                await callCount.set(current + 1)
+                throw IrisError.decodingFailed(raw: "{}")
+            }
+        } catch {}
+        #expect(await callCount.get() == 1)  // not retried — decodingFailed returns false immediately
+    }
+
+    @Test("exponential — does NOT retry imageUnreadable (exits guard before sleep)")
+    func exponential_doesNotRetryImageUnreadable() async {
+        let callCount = CaptureBox(0)
+        let policy = RetryPolicy.exponential(maxAttempts: 3)
+        do {
+            _ = try await RetryEngine.execute(policy: policy) {
+                let current = await callCount.get()
+                await callCount.set(current + 1)
+                throw IrisError.imageUnreadable(reason: "corrupt")
+            }
+        } catch {}
+        #expect(await callCount.get() == 1)
+    }
+
+    @Test("exponential — does NOT retry invalidAPIKey (exits guard before sleep)")
+    func exponential_doesNotRetryInvalidAPIKey() async {
+        let callCount = CaptureBox(0)
+        let policy = RetryPolicy.exponential(maxAttempts: 3)
+        do {
+            _ = try await RetryEngine.execute(policy: policy) {
+                let current = await callCount.get()
+                await callCount.set(current + 1)
+                throw IrisError.invalidAPIKey
+            }
+        } catch {}
+        #expect(await callCount.get() == 1)
+    }
 }
