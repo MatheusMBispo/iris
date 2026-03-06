@@ -1,6 +1,6 @@
 # Iris
 
-> Parse any image into a typed Swift struct using Claude — one line of code.
+> Parse any image into a typed Swift struct using Claude, OpenAI, Gemini, Ollama, or Apple FM — one line of code.
 
 ## Quick Start (30-second example)
 
@@ -14,6 +14,7 @@ struct Receipt {
     let items: [String]?
 }
 
+// Claude (default) — swap for any provider, syntax never changes
 let iris = IrisClient(apiKey: "sk-ant-...")
 let receipt = try await iris.parse(fileURL: receiptImageURL, as: Receipt.self)
 print(receipt.storeName ?? "Unknown store") // "Whole Foods Market"
@@ -24,6 +25,8 @@ print(receipt.storeName ?? "Unknown store") // "Whole Foods Market"
 // iOS:   iris.parse(image: uiImage, as: Receipt.self)
 // macOS: iris.parse(image: nsImage, as: Receipt.self)
 ```
+
+> **Providers:** Iris works with Claude, OpenAI GPT-4o, Google Gemini, Ollama (local), and Apple Foundation Models. See [Providers](#providers) to switch with a single line.
 
 ## Installation
 
@@ -86,12 +89,20 @@ let iris = IrisClient(provider: .gemini(apiKey: "AIza..."))
 
 ## API Key Configuration
 
-```swift
-// From environment variable (recommended for development)
-let iris = IrisClient() // reads ANTHROPIC_API_KEY automatically
+Each cloud provider uses its own key. Ollama and Apple Foundation Models require no key.
 
-// Or explicitly
-let iris = IrisClient(apiKey: "sk-ant-...")
+```swift
+// Claude — reads ANTHROPIC_API_KEY from environment (recommended for development)
+let iris = IrisClient() // or: IrisClient(apiKey: "sk-ant-...")
+
+// OpenAI — pass key explicitly
+let iris = IrisClient(provider: .openAI(apiKey: "sk-..."))
+
+// Gemini — pass key explicitly
+let iris = IrisClient(provider: .gemini(apiKey: "AIza..."))
+
+// Ollama / Apple FM — no key needed
+let iris = IrisClient(provider: .ollama(model: "llama3.2-vision"))
 ```
 
 > **Production Warning**: Never hardcode your API key in app source code. For published iOS/macOS apps:
@@ -100,7 +111,7 @@ let iris = IrisClient(apiKey: "sk-ant-...")
 
 ## Testing Without API Calls
 
-Use `IrisProvider.mock` to test your parsing logic without making real Anthropic API calls:
+Use `IrisProvider.mock` to test your parsing logic without making any real API calls:
 
 ```swift
 import Testing
@@ -109,7 +120,7 @@ import Iris
 @Test func parseReceiptWithoutAPIKey() async throws {
     // IrisClient(provider:) init — no apiKey parameter needed at all
     let iris = IrisClient(provider: .mock)
-    // IrisProvider.mock returns valid JSON without any Anthropic API call
+    // IrisProvider.mock returns valid JSON without any real API call
     // Use a real image file — ImagePipeline runs before the mock model intercepts
     let url = URL(fileURLWithPath: "Tests/IrisTests/Fixtures/supermarket-receipt.jpg")
     let receipt = try await iris.parse(fileURL: url, as: Receipt.self)
@@ -129,35 +140,24 @@ To generate a local DocC archive:
 swift package generate-documentation
 ```
 
-## Iris vs. Apple Foundation Models + Vision (iOS 26+)
+## Choosing a Provider
 
-Start free with Apple FM (iOS 26+), scale with Claude for complex docs. Here is an honest comparison:
+| Provider | Min iOS | Cost | Privacy | API Key | Accuracy |
+|---|---|---|---|---|---|
+| `.claude(apiKey:)` | iOS 16+ | Pay-per-use | Anthropic servers | Required | Best (complex docs) |
+| `.openAI(apiKey:)` | iOS 16+ | Pay-per-use | OpenAI servers | Required | Excellent |
+| `.gemini(apiKey:)` | iOS 16+ | Free tier + pay | Google servers | Required | Excellent |
+| `.ollama(model:)` | iOS 16+ | Free | On-device | None | Depends on model |
+| `.appleFoundationModels()` | iOS 26+ | Free | On-device | None | Good (simple docs) |
 
-| | Iris (Claude API) | Apple Foundation Models + Vision |
-|---|---|---|
-| Min iOS | iOS 16+ | iOS 26+ only |
-| Device requirement | Any device | A17 Pro chip or newer |
-| Works offline | No | Yes |
-| Privacy | Data sent to Anthropic servers | Stays on device |
-| Cost | Pay-per-use | Free |
-| Custom struct extraction | Full JSON schema | Limited (predefined layouts) |
-| Model accuracy | Claude (superior on complex docs) | 3B quantized (good for simple text) |
-| Simulator support | Yes | No (physical device only) |
-
-**Use Apple Foundation Models + Vision when:**
-- Your app targets iOS 26+ exclusively
-- Privacy is non-negotiable (medical, legal, financial data)
-- Offline support is required
-- You need simple text extraction from standard document layouts
-
-**Use Iris when:**
-- You need iOS 16+ support (covers the full range of active devices, not just A17 Pro models)
-- You need complex custom struct extraction from real-world documents
-- You are building a server-side parsing pipeline
-- You need superior accuracy on receipts, invoices, or multi-field documents
+**Start with `.claude`** for best accuracy on complex documents.
+**Use `.gemini`** if you need a free tier without on-device constraints.
+**Use `.ollama`** for fully private, offline inference on any iOS 16+ device.
+**Use `.appleFoundationModels()`** if your app targets iOS 26+ exclusively and privacy is non-negotiable.
 
 ## Requirements
 
 - iOS 16+ / macOS 13+
 - Xcode 16+
-- Anthropic API key ([get one at console.anthropic.com](https://console.anthropic.com))
+- API key required only for cloud providers: [Anthropic](https://console.anthropic.com) (Claude), [OpenAI](https://platform.openai.com), or [Google AI Studio](https://aistudio.google.com) (Gemini)
+- No API key needed for Ollama (local) or Apple Foundation Models (iOS 26+ / macOS 26+)
