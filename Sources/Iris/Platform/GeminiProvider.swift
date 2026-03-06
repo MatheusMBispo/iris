@@ -11,6 +11,8 @@ extension IrisProvider {
     ///   - apiKey: Your Google AI API key (`AIza...`).
     ///   - model: The model to use. Defaults to `"gemini-2.0-flash"` (fast, vision-capable, free tier available).
     /// - Returns: An `IrisProvider` configured to call the Gemini `generateContent` endpoint.
+    /// - Note: Model strings evolve — verify the latest recommended version in the
+    ///   provider's documentation before shipping.
     /// - Throws: `IrisError.invalidAPIKey` on HTTP 400/403 with API key error; `IrisError.modelFailure`
     ///   on other HTTP errors or empty candidates; `IrisError.networkError` on `URLError`.
     ///

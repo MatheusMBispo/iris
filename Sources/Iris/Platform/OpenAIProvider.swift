@@ -11,6 +11,8 @@ extension IrisProvider {
     ///   - apiKey: Your OpenAI API key (`sk-...`).
     ///   - model: The model to use. Defaults to `"gpt-4o"` (vision-capable).
     /// - Returns: An `IrisProvider` configured to call `https://api.openai.com/v1/chat/completions`.
+    /// - Note: Model strings evolve — verify the latest recommended version in the
+    ///   provider's documentation before shipping.
     /// - Throws: `IrisError.invalidAPIKey` on HTTP 401; `IrisError.modelFailure` on other HTTP errors
     ///   or empty choices; `IrisError.networkError` on `URLError`.
     public static func openAI(apiKey: String, model: String = "gpt-4o") -> IrisProvider {
