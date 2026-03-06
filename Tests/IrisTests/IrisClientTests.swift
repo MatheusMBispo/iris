@@ -167,15 +167,16 @@ struct IrisDebugInfoTests {
 struct IrisProviderClaudeURLSessionTests {
 
     @Test func claude_sendsCorrectHeaders() async throws {
-        var capturedRequest: URLRequest?
+        let requestBox = CaptureBox<URLRequest>()
         let session = await makeMockSession { request in
-            capturedRequest = request
+            await requestBox.set(request)
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             let body = #"{"content":[{"type":"text","text":"{}"}]}"#.data(using: .utf8)!
             return (response, body)
         }
         let model = IrisProvider.claude(apiKey: "test-key", model: "claude-opus-4-6", session: session)
         _ = try await model.parse(Data(), "prompt")
+        let capturedRequest = await requestBox.get()
         #expect(capturedRequest?.httpMethod == "POST")
         #expect(capturedRequest?.url?.absoluteString == "https://api.anthropic.com/v1/messages")
         #expect(capturedRequest?.value(forHTTPHeaderField: "x-api-key") == "test-key")
@@ -185,17 +186,17 @@ struct IrisProviderClaudeURLSessionTests {
 
     @Test func claude_sendsBase64Image() async throws {
         let imageData = Data([0xAA, 0xBB, 0xCC])
-        var requestBody: [String: Any]?
+        let bodyBox = CaptureBox<Data>()
         let session = await makeMockSession { request in
-            if let body = bodyData(from: request) {
-                requestBody = try JSONSerialization.jsonObject(with: body) as? [String: Any]
-            }
+            if let body = bodyData(from: request) { await bodyBox.set(body) }
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             let responseBody = #"{"content":[{"type":"text","text":"{}"}]}"#.data(using: .utf8)!
             return (response, responseBody)
         }
         let model = IrisProvider.claude(apiKey: "key", model: "claude-opus-4-6", session: session)
         _ = try await model.parse(imageData, "prompt")
+        let capturedBodyData = await bodyBox.get()
+        let requestBody = capturedBodyData.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
         let messages = requestBody?["messages"] as? [[String: Any]]
         let content = messages?.first?["content"] as? [[String: Any]]
         let imageBlock = content?.first(where: { $0["type"] as? String == "image" })
@@ -696,12 +697,10 @@ struct DebugModeTests {
 
 private actor HandlerStorage {
     private var handler: ((URLRequest) async throws -> (HTTPURLResponse, Data))?
-    func setHandler(_ h: sending @escaping (URLRequest) async throws -> (HTTPURLResponse, Data)) {
-        handler = h
-    }
-    func callHandler(with request: URLRequest) async throws -> (HTTPURLResponse, Data) {
+    func setHandler(_ h: @escaping (URLRequest) async throws -> (HTTPURLResponse, Data)) { handler = h }
+    func callHandler(with req: URLRequest) async throws -> (HTTPURLResponse, Data) {
         guard let handler else { throw URLError(.unknown) }
-        return try await handler(request)
+        return try await handler(req)
     }
 }
 
@@ -730,7 +729,7 @@ private final class MockURLProtocol: URLProtocol, @unchecked Sendable {
 }
 
 private func makeMockSession(
-    handler: sending @escaping (URLRequest) async throws -> (HTTPURLResponse, Data)
+    handler: @escaping (URLRequest) async throws -> (HTTPURLResponse, Data)
 ) async -> URLSession {
     await MockURLProtocol.storage.setHandler(handler)
     let config = URLSessionConfiguration.ephemeral

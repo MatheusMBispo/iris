@@ -107,10 +107,10 @@ struct OpenAIProviderTests {
     }
 
     @Test func requestBodyContainsBase64ImageAndModel() async throws {
-        var capturedBodyData: Data?
+        let bodyBox = CaptureBox<Data>()
         let imageData = minimalJPEGData()
         let session = await makeMockSession { request in
-            capturedBodyData = bodyData(from: request)
+            if let data = bodyData(from: request) { await bodyBox.set(data) }
             let response = HTTPURLResponse(
                 url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             return (response, openAISuccessJSON)
@@ -118,6 +118,7 @@ struct OpenAIProviderTests {
         let provider = IrisProvider.openAI(apiKey: "sk-test", model: "gpt-4o", session: session)
         _ = try await provider.parse(imageData, "test prompt")
 
+        let capturedBodyData = await bodyBox.get()
         #expect(capturedBodyData != nil)
         let bodyString = String(data: capturedBodyData!, encoding: .utf8)!
         // JSONEncoder escapes forward slashes (/ → \/), normalize before comparing base64
@@ -161,7 +162,7 @@ private actor CaptureBox<T> {
 
 private actor HandlerStorage {
     private var handler: ((URLRequest) async throws -> (HTTPURLResponse, Data))?
-    func setHandler(_ h: sending @escaping (URLRequest) async throws -> (HTTPURLResponse, Data)) { handler = h }
+    func setHandler(_ h: @escaping (URLRequest) async throws -> (HTTPURLResponse, Data)) { handler = h }
     func callHandler(with req: URLRequest) async throws -> (HTTPURLResponse, Data) {
         guard let handler else { throw URLError(.unknown) }
         return try await handler(req)
@@ -193,7 +194,7 @@ private final class OpenAIMockURLProtocol: URLProtocol, @unchecked Sendable {
 }
 
 private func makeMockSession(
-    handler: sending @escaping (URLRequest) async throws -> (HTTPURLResponse, Data)
+    handler: @escaping (URLRequest) async throws -> (HTTPURLResponse, Data)
 ) async -> URLSession {
     await OpenAIMockURLProtocol.storage.setHandler(handler)
     let config = URLSessionConfiguration.ephemeral

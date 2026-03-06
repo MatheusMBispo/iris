@@ -155,14 +155,9 @@ struct GeminiTypedReceipt {
 // MARK: - Test Helpers (Mirrored from IrisClientTests.swift — local private copies)
 
 private actor HandlerStorage {
-    private var handler: ((URLRequest) async throws -> (HTTPURLResponse, Data))?
-    func setHandler(_ h: sending @escaping (URLRequest) async throws -> (HTTPURLResponse, Data)) {
-        handler = h
-    }
-    func callHandler(with request: URLRequest) async throws -> (HTTPURLResponse, Data) {
-        guard let handler else { throw URLError(.unknown) }
-        return try await handler(request)
-    }
+    // nonisolated(unsafe) lets the handler be read/written without actor overhead;
+    // data-race safety is provided by the .serialized trait on every suite that uses this storage.
+    nonisolated(unsafe) var handler: ((URLRequest) async throws -> (HTTPURLResponse, Data))?
 }
 
 private final class GeminiMockURLProtocol: URLProtocol, @unchecked Sendable {
@@ -176,7 +171,11 @@ private final class GeminiMockURLProtocol: URLProtocol, @unchecked Sendable {
         let cli = client
         Task {
             do {
-                let (response, data) = try await GeminiMockURLProtocol.storage.callHandler(with: req)
+                guard let handler = GeminiMockURLProtocol.storage.handler else {
+                    cli?.urlProtocol(self, didFailWithError: URLError(.unknown))
+                    return
+                }
+                let (response, data) = try await handler(req)
                 cli?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
                 cli?.urlProtocol(self, didLoad: data)
                 cli?.urlProtocolDidFinishLoading(self)
@@ -190,9 +189,9 @@ private final class GeminiMockURLProtocol: URLProtocol, @unchecked Sendable {
 }
 
 private func makeMockSession(
-    handler: sending @escaping (URLRequest) async throws -> (HTTPURLResponse, Data)
+    handler: @escaping (URLRequest) async throws -> (HTTPURLResponse, Data)
 ) async -> URLSession {
-    await GeminiMockURLProtocol.storage.setHandler(handler)
+    GeminiMockURLProtocol.storage.handler = handler
     let config = URLSessionConfiguration.ephemeral
     config.protocolClasses = [GeminiMockURLProtocol.self]
     return URLSession(configuration: config)
