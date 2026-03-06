@@ -113,7 +113,7 @@ struct IrisProviderClaudeTests {
 
     @Test func claude_sendsCustomModelInRequestBody() async throws {
         var capturedBody: [String: Any]?
-        let session = makeMockSession { request in
+        let session = await makeMockSession { request in
             if let data = bodyData(from: request) {
                 capturedBody = try JSONSerialization.jsonObject(with: data) as? [String: Any]
             }
@@ -128,7 +128,7 @@ struct IrisProviderClaudeTests {
 
     @Test func claude_defaultModel_isClaudeOpus46() async throws {
         var capturedBody: [String: Any]?
-        let session = makeMockSession { request in
+        let session = await makeMockSession { request in
             if let data = bodyData(from: request) {
                 capturedBody = try JSONSerialization.jsonObject(with: data) as? [String: Any]
             }
@@ -151,29 +151,43 @@ private actor CaptureBox<T> {
     func get() -> T? { value }
 }
 
-private final class IrisProviderMockURLProtocol: URLProtocol {
-    nonisolated(unsafe) static var requestHandler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+private actor HandlerStorage {
+    var handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+}
+
+private final class IrisProviderMockURLProtocol: URLProtocol, @unchecked Sendable {
+    static let storage = HandlerStorage()
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
-        guard let handler = IrisProviderMockURLProtocol.requestHandler else { return }
-        do {
-            let (response, data) = try handler(request)
-            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: data)
-            client?.urlProtocolDidFinishLoading(self)
-        } catch {
-            client?.urlProtocol(self, didFailWithError: error)
+        let req = request
+        let cli = client
+        Task {
+            let h = await IrisProviderMockURLProtocol.storage.handler
+            guard let handler = h else {
+                cli?.urlProtocol(self, didFailWithError: URLError(.unknown))
+                return
+            }
+            do {
+                let (response, data) = try handler(req)
+                cli?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+                cli?.urlProtocol(self, didLoad: data)
+                cli?.urlProtocolDidFinishLoading(self)
+            } catch {
+                cli?.urlProtocol(self, didFailWithError: error)
+            }
         }
     }
 
     override func stopLoading() {}
 }
 
-private func makeMockSession(handler: @escaping (URLRequest) throws -> (HTTPURLResponse, Data)) -> URLSession {
-    IrisProviderMockURLProtocol.requestHandler = handler
+private func makeMockSession(
+    handler: @escaping (URLRequest) throws -> (HTTPURLResponse, Data)
+) async -> URLSession {
+    await IrisProviderMockURLProtocol.storage.handler = handler
     let config = URLSessionConfiguration.ephemeral
     config.protocolClasses = [IrisProviderMockURLProtocol.self]
     return URLSession(configuration: config)

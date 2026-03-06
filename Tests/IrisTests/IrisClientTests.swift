@@ -171,7 +171,7 @@ struct IrisProviderClaudeURLSessionTests {
 
     @Test func claude_sendsCorrectHeaders() async throws {
         var capturedRequest: URLRequest?
-        let session = makeMockSession { request in
+        let session = await makeMockSession { request in
             capturedRequest = request
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             let body = #"{"content":[{"type":"text","text":"{}"}]}"#.data(using: .utf8)!
@@ -189,7 +189,7 @@ struct IrisProviderClaudeURLSessionTests {
     @Test func claude_sendsBase64Image() async throws {
         let imageData = Data([0xAA, 0xBB, 0xCC])
         var requestBody: [String: Any]?
-        let session = makeMockSession { request in
+        let session = await makeMockSession { request in
             if let body = bodyData(from: request) {
                 requestBody = try JSONSerialization.jsonObject(with: body) as? [String: Any]
             }
@@ -210,7 +210,7 @@ struct IrisProviderClaudeURLSessionTests {
 
     @Test func claude_returnsFirstTextBlock() async throws {
         let expectedJSON = #"{"total":"R$42.00"}"#
-        let session = makeMockSession { request in
+        let session = await makeMockSession { request in
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             let body = "{\"content\":[{\"type\":\"text\",\"text\":\"\(expectedJSON.replacingOccurrences(of: "\"", with: "\\\""))\"}]}".data(using: .utf8)!
             return (response, body)
@@ -225,7 +225,7 @@ struct IrisProviderClaudeURLSessionTests {
         let body = try JSONSerialization.data(withJSONObject: [
             "content": [["type": "text", "text": wrapped]]
         ])
-        let session = makeMockSession { request in
+        let session = await makeMockSession { request in
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             return (response, body)
         }
@@ -238,7 +238,7 @@ struct IrisProviderClaudeURLSessionTests {
     }
 
     @Test func claude_http401_throwsInvalidAPIKey() async {
-        let session = makeMockSession { request in
+        let session = await makeMockSession { request in
             let response = HTTPURLResponse(url: request.url!, statusCode: 401, httpVersion: nil, headerFields: nil)!
             return (response, Data())
         }
@@ -252,7 +252,7 @@ struct IrisProviderClaudeURLSessionTests {
     }
 
     @Test func claude_httpError_throwsModelFailure() async {
-        let session = makeMockSession { request in
+        let session = await makeMockSession { request in
             let response = HTTPURLResponse(url: request.url!, statusCode: 500, httpVersion: nil, headerFields: nil)!
             return (response, "Internal Server Error".data(using: .utf8)!)
         }
@@ -267,7 +267,7 @@ struct IrisProviderClaudeURLSessionTests {
     }
 
     @Test func claude_urlError_throwsNetworkError() async {
-        let session = makeMockSession { _ in
+        let session = await makeMockSession { _ in
             throw URLError(.notConnectedToInternet)
         }
         let model = IrisProvider.claude(apiKey: "key", model: "claude-opus-4-6", session: session)
@@ -703,29 +703,43 @@ struct DebugModeTests {
 
 // MARK: - Test Helpers
 
-private final class MockURLProtocol: URLProtocol {
-    nonisolated(unsafe) static var requestHandler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+private actor HandlerStorage {
+    var handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+}
+
+private final class MockURLProtocol: URLProtocol, @unchecked Sendable {
+    static let storage = HandlerStorage()
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
-        guard let handler = MockURLProtocol.requestHandler else { return }
-        do {
-            let (response, data) = try handler(request)
-            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: data)
-            client?.urlProtocolDidFinishLoading(self)
-        } catch {
-            client?.urlProtocol(self, didFailWithError: error)
+        let req = request
+        let cli = client
+        Task {
+            let h = await MockURLProtocol.storage.handler
+            guard let handler = h else {
+                cli?.urlProtocol(self, didFailWithError: URLError(.unknown))
+                return
+            }
+            do {
+                let (response, data) = try handler(req)
+                cli?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+                cli?.urlProtocol(self, didLoad: data)
+                cli?.urlProtocolDidFinishLoading(self)
+            } catch {
+                cli?.urlProtocol(self, didFailWithError: error)
+            }
         }
     }
 
     override func stopLoading() {}
 }
 
-private func makeMockSession(handler: @escaping (URLRequest) throws -> (HTTPURLResponse, Data)) -> URLSession {
-    MockURLProtocol.requestHandler = handler
+private func makeMockSession(
+    handler: @escaping (URLRequest) throws -> (HTTPURLResponse, Data)
+) async -> URLSession {
+    await MockURLProtocol.storage.handler = handler
     let config = URLSessionConfiguration.ephemeral
     config.protocolClasses = [MockURLProtocol.self]
     return URLSession(configuration: config)

@@ -18,7 +18,7 @@ struct OpenAIProviderTests {
     // MARK: - Tests
 
     @Test func successfulParse() async throws {
-        let session = makeMockSession { request in
+        let session = await makeMockSession { request in
             let response = HTTPURLResponse(
                 url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             return (response, openAISuccessJSON)
@@ -29,7 +29,7 @@ struct OpenAIProviderTests {
     }
 
     @Test func http401ThrowsInvalidAPIKey() async throws {
-        let session = makeMockSession { request in
+        let session = await makeMockSession { request in
             let response = HTTPURLResponse(
                 url: request.url!, statusCode: 401, httpVersion: nil, headerFields: nil)!
             return (response, Data())
@@ -49,7 +49,7 @@ struct OpenAIProviderTests {
     }
 
     @Test func http500ThrowsModelFailure() async throws {
-        let session = makeMockSession { request in
+        let session = await makeMockSession { request in
             let response = HTTPURLResponse(
                 url: request.url!, statusCode: 500, httpVersion: nil, headerFields: nil)!
             return (response, "Internal Server Error".data(using: .utf8)!)
@@ -69,7 +69,7 @@ struct OpenAIProviderTests {
     }
 
     @Test func urlErrorThrowsNetworkError() async throws {
-        let session = makeMockSession { _ in
+        let session = await makeMockSession { _ in
             throw URLError(.notConnectedToInternet)
         }
         let provider = IrisProvider.openAI(apiKey: "sk-test", model: "gpt-4o", session: session)
@@ -87,7 +87,7 @@ struct OpenAIProviderTests {
     }
 
     @Test func emptyChoicesThrowsModelFailure() async throws {
-        let session = makeMockSession { request in
+        let session = await makeMockSession { request in
             let response = HTTPURLResponse(
                 url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             return (response, openAIEmptyChoicesJSON)
@@ -109,7 +109,7 @@ struct OpenAIProviderTests {
     @Test func requestBodyContainsBase64ImageAndModel() async throws {
         var capturedRequest: URLRequest?
         let imageData = minimalJPEGData()
-        let session = makeMockSession { request in
+        let session = await makeMockSession { request in
             capturedRequest = request
             let response = HTTPURLResponse(
                 url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
@@ -132,7 +132,7 @@ struct OpenAIProviderTests {
         let responseBody = try JSONSerialization.data(withJSONObject: [
             "choices": [["message": ["content": content]]]
         ])
-        let session = makeMockSession { request in
+        let session = await makeMockSession { request in
             let response = HTTPURLResponse(
                 url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             return (response, responseBody)
@@ -154,29 +154,43 @@ struct OpenAITypedReceipt {
 
 // MARK: - Test Helpers (Mirrored from IrisClientTests.swift — local private copies)
 
-private final class OpenAIMockURLProtocol: URLProtocol {
-    nonisolated(unsafe) static var requestHandler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+private actor HandlerStorage {
+    var handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+}
+
+private final class OpenAIMockURLProtocol: URLProtocol, @unchecked Sendable {
+    static let storage = HandlerStorage()
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
-        guard let handler = OpenAIMockURLProtocol.requestHandler else { return }
-        do {
-            let (response, data) = try handler(request)
-            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: data)
-            client?.urlProtocolDidFinishLoading(self)
-        } catch {
-            client?.urlProtocol(self, didFailWithError: error)
+        let req = request
+        let cli = client
+        Task {
+            let h = await OpenAIMockURLProtocol.storage.handler
+            guard let handler = h else {
+                cli?.urlProtocol(self, didFailWithError: URLError(.unknown))
+                return
+            }
+            do {
+                let (response, data) = try handler(req)
+                cli?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+                cli?.urlProtocol(self, didLoad: data)
+                cli?.urlProtocolDidFinishLoading(self)
+            } catch {
+                cli?.urlProtocol(self, didFailWithError: error)
+            }
         }
     }
 
     override func stopLoading() {}
 }
 
-private func makeMockSession(handler: @escaping (URLRequest) throws -> (HTTPURLResponse, Data)) -> URLSession {
-    OpenAIMockURLProtocol.requestHandler = handler
+private func makeMockSession(
+    handler: @escaping (URLRequest) throws -> (HTTPURLResponse, Data)
+) async -> URLSession {
+    await OpenAIMockURLProtocol.storage.handler = handler
     let config = URLSessionConfiguration.ephemeral
     config.protocolClasses = [OpenAIMockURLProtocol.self]
     return URLSession(configuration: config)
