@@ -106,10 +106,90 @@ struct IrisProviderMockAdditionalTests {
     }
 }
 
+// MARK: - IrisProvider.claude model-forwarding tests (RED — requires Plan 02 production changes)
+
+@Suite("IrisProvider.claude model forwarding", .serialized)
+struct IrisProviderClaudeTests {
+
+    @Test func claude_sendsCustomModelInRequestBody() async throws {
+        var capturedBody: [String: Any]?
+        let session = makeMockSession { request in
+            if let data = bodyData(from: request) {
+                capturedBody = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            }
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let responseBody = #"{"content":[{"type":"text","text":"{}"}]}"#.data(using: .utf8)!
+            return (response, responseBody)
+        }
+        let provider = IrisProvider.claude(apiKey: "key", model: "claude-custom-test", session: session)
+        _ = try await provider.parse(Data(), "prompt")
+        #expect(capturedBody?["model"] as? String == "claude-custom-test")
+    }
+
+    @Test func claude_defaultModel_isClaudeOpus46() async throws {
+        var capturedBody: [String: Any]?
+        let session = makeMockSession { request in
+            if let data = bodyData(from: request) {
+                capturedBody = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            }
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let responseBody = #"{"content":[{"type":"text","text":"{}"}]}"#.data(using: .utf8)!
+            return (response, responseBody)
+        }
+        // No model: parameter — exercises the default
+        let provider = IrisProvider.claude(apiKey: "key", session: session)
+        _ = try await provider.parse(Data(), "prompt")
+        #expect(capturedBody?["model"] as? String == "claude-opus-4-6")
+    }
+}
+
 // MARK: - Shared helpers (mirrored from IrisClientTests.swift — NOT duplicating, just local copies)
 
 private actor CaptureBox<T> {
     private var value: T?
     func set(_ v: T) { value = v }
     func get() -> T? { value }
+}
+
+private final class IrisProviderMockURLProtocol: URLProtocol {
+    nonisolated(unsafe) static var requestHandler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let handler = IrisProviderMockURLProtocol.requestHandler else { return }
+        do {
+            let (response, data) = try handler(request)
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
+}
+
+private func makeMockSession(handler: @escaping (URLRequest) throws -> (HTTPURLResponse, Data)) -> URLSession {
+    IrisProviderMockURLProtocol.requestHandler = handler
+    let config = URLSessionConfiguration.ephemeral
+    config.protocolClasses = [IrisProviderMockURLProtocol.self]
+    return URLSession(configuration: config)
+}
+
+private func bodyData(from request: URLRequest) -> Data? {
+    if let body = request.httpBody { return body }
+    guard let stream = request.httpBodyStream else { return nil }
+    stream.open()
+    var data = Data()
+    let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: 65_536)
+    defer { buffer.deallocate(); stream.close() }
+    while stream.hasBytesAvailable {
+        let count = stream.read(buffer, maxLength: 65_536)
+        guard count > 0 else { break }
+        data.append(buffer, count: count)
+    }
+    return data
 }
