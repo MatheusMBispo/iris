@@ -68,6 +68,52 @@ extension IrisProvider {
     }
 }
 
+@available(iOS 26.0, macOS 26.0, *)
+extension IrisProvider {
+
+    /// Internal factory for testing the retry/validation loop without real Foundation Models.
+    ///
+    /// `sessionResponder` replaces `LanguageModelSession.respond(to:)`, receiving the FM prompt
+    /// and returning raw text (which may or may not be valid JSON).
+    /// This mirrors the `IrisProvider.claude(apiKey:session:)` testable seam pattern.
+    static func _appleFoundationModels(
+        maxRetries: Int = 3,
+        sessionResponder: @escaping @Sendable (_ prompt: String) async throws -> String
+    ) -> IrisProvider {
+        IrisProvider { imageData, prompt in
+            let ocrText = try await extractText(from: imageData)
+            let fmPrompt = buildFoundationModelsPrompt(ocrText: ocrText, schemaPrompt: prompt)
+            let attemptLimit = max(1, maxRetries)
+
+            for attempt in 1...attemptLimit {
+                let rawText: String
+                do {
+                    rawText = try await sessionResponder(fmPrompt)
+                } catch {
+                    throw IrisError.modelFailure(
+                        message: "Apple Foundation Model unavailable or failed: \(error.localizedDescription)"
+                    )
+                }
+
+                let candidate = extractJSON(from: rawText)
+
+                if let data = candidate.data(using: .utf8),
+                   (try? JSONSerialization.jsonObject(with: data)) != nil {
+                    return candidate
+                }
+
+                if attempt == attemptLimit {
+                    throw IrisError.modelFailure(
+                        message: "Apple Foundation Model failed to produce valid JSON after \(attemptLimit) attempts"
+                    )
+                }
+            }
+
+            throw IrisError.modelFailure(message: "Apple Foundation Model: no attempts executed")
+        }
+    }
+}
+
 // MARK: - Private Helpers (inside #if canImport block)
 
 // No @available — Vision is iOS 13+; the #if canImport guard + calling context are sufficient
@@ -100,7 +146,7 @@ private func extractText(from jpegData: Data) async throws -> String {
 }
 
 @available(iOS 26.0, macOS 26.0, *)
-private func buildFoundationModelsPrompt(ocrText: String, schemaPrompt: String) -> String {
+func buildFoundationModelsPrompt(ocrText: String, schemaPrompt: String) -> String {
     """
     You are a document data extraction assistant.
 
@@ -116,15 +162,55 @@ private func buildFoundationModelsPrompt(ocrText: String, schemaPrompt: String) 
 }
 
 // No @available — pure String manipulation, no platform dependency
-private func extractJSON(from text: String) -> String {
+func extractJSON(from text: String) -> String {
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
-    // Strip ```json ... ``` fences
-    if trimmed.hasPrefix("```") {
-        let lines = trimmed.components(separatedBy: "\n")
-        // Remove first line (```json or ```) and last line (```)
-        let content = lines.dropFirst().dropLast().joined(separator: "\n")
-        return content.trimmingCharacters(in: .whitespacesAndNewlines)
+    // Extract content inside markdown code fences when present.
+    if let firstFence = trimmed.range(of: "```") {
+        let afterFirstFence = trimmed[firstFence.upperBound...]
+        if let secondFenceRel = afterFirstFence.range(of: "```") {
+            var fenced = String(afterFirstFence[..<secondFenceRel.lowerBound])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if fenced.hasPrefix("json") {
+                fenced.removeFirst(4)
+                fenced = fenced.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            if !fenced.isEmpty {
+                return fenced
+            }
+        }
+    }
+
+    // Fallback: extract first balanced JSON object from surrounding prose.
+    if let open = trimmed.firstIndex(of: "{") {
+        var depth = 0
+        var inString = false
+        var escaping = false
+        var cursor = open
+        while cursor < trimmed.endIndex {
+            let ch = trimmed[cursor]
+            if inString {
+                if escaping {
+                    escaping = false
+                } else if ch == "\\" {
+                    escaping = true
+                } else if ch == "\"" {
+                    inString = false
+                }
+            } else {
+                if ch == "\"" {
+                    inString = true
+                } else if ch == "{" {
+                    depth += 1
+                } else if ch == "}" {
+                    depth -= 1
+                    if depth == 0 {
+                        return String(trimmed[open...cursor])
+                    }
+                }
+            }
+            cursor = trimmed.index(after: cursor)
+        }
     }
 
     return trimmed
