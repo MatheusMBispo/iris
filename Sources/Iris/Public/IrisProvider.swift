@@ -2,16 +2,26 @@ import Foundation
 
 /// A Protocol Witnesses struct that encapsulates an AI provider's parsing behavior.
 ///
-/// `IrisProvider` provides the boundary between `IrisClient` and any AI provider.
-/// The default implementation is `IrisProvider.claude`, which calls the Anthropic Messages API.
-/// Use `IrisProvider.mock` in tests and SwiftUI Previews to avoid real network calls.
+/// `IrisProvider` is the extensibility boundary between `IrisClient` and any AI provider.
+/// Three built-in providers are available:
 ///
-/// Custom providers can be injected without changing any call-site syntax:
+/// - ``IrisProvider/claude(apiKey:)`` — Calls the Anthropic Messages API. Best accuracy,
+///   supports iOS 16+. Requires an API key and network access.
+/// - ``IrisProvider/appleFoundationModels(maxRetries:)`` — On-device inference via Apple's
+///   Foundation Models framework. Free, private, no API key. Requires iOS 26+ / macOS 26+.
+/// - ``IrisProvider/mock`` — Returns a hardcoded empty JSON object. Use in unit tests and
+///   SwiftUI Previews to avoid real API calls.
+///
+/// Switch providers with a single line — the `parse` call syntax never changes:
 /// ```swift
-/// let custom = IrisProvider { imageData, prompt in
-///     return #"{"storeName": "Iris Store", "total": 42.0}"#
-/// }
-/// let iris = IrisClient(apiKey: key, provider: custom)
+/// // Production: Claude via Anthropic API (simplest form)
+/// let iris = IrisClient(apiKey: "sk-ant-...")
+///
+/// // Free on-device: Apple Foundation Models (iOS 26+ / macOS 26+)
+/// let iris = IrisClient(provider: .appleFoundationModels())
+///
+/// // Custom provider: any async closure
+/// let iris = IrisClient(provider: IrisProvider { data, prompt in ... })
 /// ```
 public struct IrisProvider: Sendable {
 

@@ -43,6 +43,37 @@ targets: [
 
 Then import: `import Iris`
 
+## Providers
+
+Iris supports multiple AI providers via `IrisProvider` — a Protocol Witnesses struct. Switch providers with a single line:
+
+```swift
+// Default: Claude via Anthropic API (best accuracy, any iOS/macOS version)
+let iris = IrisClient(apiKey: "sk-ant-...")
+
+// Free on-device: Apple Foundation Models (iOS 26+ / macOS 26+ only)
+let iris = IrisClient(provider: .appleFoundationModels())
+
+// Testing: see [Testing Without API Calls](#testing-without-api-calls)
+let iris = IrisClient(provider: .mock)
+
+// Custom: inject any async closure as a provider
+let custom = IrisProvider { imageData, prompt in
+    return #"{"storeName": "Custom Store", "total": 42.0}"#
+}
+let iris = IrisClient(provider: custom)
+```
+
+Switch from Claude to Apple Foundation Models in **one line**:
+
+```swift
+// Before
+let iris = IrisClient(apiKey: "sk-ant-...")
+
+// After — free, on-device, no API key
+let iris = IrisClient(provider: .appleFoundationModels())
+```
+
 ## API Key Configuration
 
 ```swift
@@ -90,7 +121,7 @@ swift package generate-documentation
 
 ## Iris vs. Apple Foundation Models + Vision (iOS 26+)
 
-Apple's on-device stack (Foundation Models + `RecognizeDocumentsRequest`) is excellent for specific use cases. Here is an honest comparison:
+Start free with Apple FM (iOS 26+), scale with Claude for complex docs. Here is an honest comparison:
 
 | | Iris (Claude API) | Apple Foundation Models + Vision |
 |---|---|---|
