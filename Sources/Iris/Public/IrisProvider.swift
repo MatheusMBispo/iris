@@ -3,25 +3,21 @@ import Foundation
 /// A Protocol Witnesses struct that encapsulates an AI provider's parsing behavior.
 ///
 /// `IrisProvider` is the extensibility boundary between `IrisClient` and any AI provider.
-/// Three built-in providers are available:
+/// Six built-in providers are available:
 ///
-/// - ``IrisProvider/claude(apiKey:)`` — Calls the Anthropic Messages API. Best accuracy,
-///   supports iOS 16+. Requires an API key and network access.
-/// - ``IrisProvider/appleFoundationModels(maxRetries:)`` — On-device inference via Apple's
-///   Foundation Models framework. Free, private, no API key. Requires iOS 26+ / macOS 26+.
-/// - ``IrisProvider/mock`` — Returns a hardcoded empty JSON object. Use in unit tests and
-///   SwiftUI Previews to avoid real API calls.
+/// - ``IrisProvider/claude(apiKey:)`` — Anthropic Claude. Best accuracy, iOS 16+. Requires API key + network.
+/// - ``IrisProvider/openAI(apiKey:model:)`` — OpenAI GPT-4o Vision. Strong accuracy, iOS 16+. Requires API key + network.
+/// - ``IrisProvider/gemini(apiKey:model:)`` — Google Gemini Vision. Fast, free tier available, iOS 16+. Requires API key + network.
+/// - ``IrisProvider/ollama(model:endpoint:)`` — On-device via Ollama. Free, private, no API key. Requires Ollama running locally.
+/// - ``IrisProvider/appleFoundationModels(maxRetries:)`` — On-device Apple FM. Free, private, no API key. Requires iOS 26+ / macOS 26+.
+/// - ``IrisProvider/mock`` — Returns hardcoded empty JSON. Use in unit tests and SwiftUI Previews.
 ///
 /// Switch providers with a single line — the `parse` call syntax never changes:
 /// ```swift
-/// // Production: Claude via Anthropic API (simplest form)
-/// let iris = IrisClient(apiKey: "sk-ant-...")
-///
-/// // Free on-device: Apple Foundation Models (iOS 26+ / macOS 26+)
-/// let iris = IrisClient(provider: .appleFoundationModels())
-///
-/// // Custom provider: any async closure
-/// let iris = IrisClient(provider: IrisProvider { data, prompt in ... })
+/// let iris = IrisClient(apiKey: "sk-ant-...")                         // Claude (default)
+/// let iris = IrisClient(provider: .openAI(apiKey: "sk-..."))          // GPT-4o
+/// let iris = IrisClient(provider: .gemini(apiKey: "AIza..."))         // Gemini Flash
+/// let iris = IrisClient(provider: .ollama(model: "llama3.2-vision"))  // Local
 /// ```
 public struct IrisProvider: Sendable {
 

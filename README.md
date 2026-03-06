@@ -48,10 +48,19 @@ Then import: `import Iris`
 Iris supports multiple AI providers via `IrisProvider` — a Protocol Witnesses struct. Switch providers with a single line:
 
 ```swift
-// Default: Claude via Anthropic API (best accuracy, any iOS/macOS version)
+// Claude (default) — best accuracy, iOS 16+
 let iris = IrisClient(apiKey: "sk-ant-...")
 
-// Free on-device: Apple Foundation Models (iOS 26+ / macOS 26+ only)
+// OpenAI GPT-4o Vision — strong accuracy, iOS 16+
+let iris = IrisClient(provider: .openAI(apiKey: "sk-..."))
+
+// Google Gemini Flash — fast, free tier, iOS 16+
+let iris = IrisClient(provider: .gemini(apiKey: "AIza..."))
+
+// Ollama — on-device, free, no API key (requires Ollama running locally)
+let iris = IrisClient(provider: .ollama(model: "llama3.2-vision"))
+
+// Apple Foundation Models — on-device, free, no API key (iOS 26+ / macOS 26+ only)
 let iris = IrisClient(provider: .appleFoundationModels())
 
 // Testing: see [Testing Without API Calls](#testing-without-api-calls)
@@ -59,19 +68,20 @@ let iris = IrisClient(provider: .mock)
 
 // Custom: inject any async closure as a provider
 let custom = IrisProvider { imageData, prompt in
+    // call any API here
     return #"{"storeName": "Custom Store", "total": 42.0}"#
 }
 let iris = IrisClient(provider: custom)
 ```
 
-Switch from Claude to Apple Foundation Models in **one line**:
+Switch from Claude to Gemini in **one line**:
 
 ```swift
 // Before
 let iris = IrisClient(apiKey: "sk-ant-...")
 
-// After — free, on-device, no API key
-let iris = IrisClient(provider: .appleFoundationModels())
+// After — same parse() syntax, different provider
+let iris = IrisClient(provider: .gemini(apiKey: "AIza..."))
 ```
 
 ## API Key Configuration
