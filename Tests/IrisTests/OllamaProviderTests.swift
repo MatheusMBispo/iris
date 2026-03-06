@@ -113,6 +113,34 @@ struct OllamaProviderTests {
         #expect(normalizedBody.contains(imageData.base64EncodedString()))
         #expect(normalizedBody.contains("llama3.2-vision"))
     }
+
+    @Test func quotedNumberIsNormalized() async throws {
+        let content = #"{"storeName":"Fresh Market","totalAmount":"$45.78"}"#
+        let responseBody = try JSONSerialization.data(withJSONObject: [
+            "message": ["content": content]
+        ])
+        let session = makeMockSession { request in
+            let response = HTTPURLResponse(
+                url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (response, responseBody)
+        }
+        let provider = IrisProvider.ollama(
+            model: "llama3.2-vision",
+            endpoint: URL(string: "http://localhost:11434/api/chat")!,
+            session: session
+        )
+        let result = try await provider.parse(minimalJPEGData(), PromptBuilder.build(for: OllamaTypedReceipt.self))
+        let data = try #require(result.data(using: .utf8))
+        let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(object["storeName"] as? String == "Fresh Market")
+        #expect((object["totalAmount"] as? NSNumber)?.doubleValue == 45.78)
+    }
+}
+
+@Parseable
+struct OllamaTypedReceipt {
+    let storeName: String?
+    let totalAmount: Double?
 }
 
 // MARK: - Test Helpers (Mirrored from IrisClientTests.swift — local private copies)

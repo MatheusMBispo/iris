@@ -49,11 +49,8 @@ extension IrisProvider {
                 }
 
                 let candidate = extractJSON(from: responseContent)
-
-                // Validate JSON
-                if let data = candidate.data(using: .utf8),
-                   (try? JSONSerialization.jsonObject(with: data)) != nil {
-                    return candidate
+                if let sanitized = sanitizeProviderJSON(candidate, schemaPrompt: prompt) {
+                    return sanitized
                 }
 
                 if attempt == attemptLimit {
@@ -96,10 +93,8 @@ extension IrisProvider {
                 }
 
                 let candidate = extractJSON(from: rawText)
-
-                if let data = candidate.data(using: .utf8),
-                   (try? JSONSerialization.jsonObject(with: data)) != nil {
-                    return candidate
+                if let sanitized = sanitizeProviderJSON(candidate, schemaPrompt: prompt) {
+                    return sanitized
                 }
 
                 if attempt == attemptLimit {
@@ -157,63 +152,12 @@ func buildFoundationModelsPrompt(ocrText: String, schemaPrompt: String) -> Strin
 
     \(schemaPrompt)
 
-    IMPORTANT: Respond with ONLY valid JSON. Do not include markdown code fences, explanations, or any text outside the JSON object. Start your response with { and end with }.
+    IMPORTANT: Respond with ONLY valid JSON. Do not include markdown code fences, explanations, comments, or any text outside the JSON object. Start your response with { and end with }.
+    IMPORTANT: Follow the schema types exactly. If a field is a number or integer, output a JSON number, not a quoted string.
+    IMPORTANT: Do not include currency symbols, currency codes, thousands separators, or locale-formatted decimals inside numeric fields. Use digits only and a period (.) for decimals.
+    IMPORTANT: If an optional field cannot be determined, use null.
     """
 }
 
-// No @available — pure String manipulation, no platform dependency
-func extractJSON(from text: String) -> String {
-    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-
-    // Extract content inside markdown code fences when present.
-    if let firstFence = trimmed.range(of: "```") {
-        let afterFirstFence = trimmed[firstFence.upperBound...]
-        if let secondFenceRel = afterFirstFence.range(of: "```") {
-            var fenced = String(afterFirstFence[..<secondFenceRel.lowerBound])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if fenced.hasPrefix("json") {
-                fenced.removeFirst(4)
-                fenced = fenced.trimmingCharacters(in: .whitespacesAndNewlines)
-            }
-            if !fenced.isEmpty {
-                return fenced
-            }
-        }
-    }
-
-    // Fallback: extract first balanced JSON object from surrounding prose.
-    if let open = trimmed.firstIndex(of: "{") {
-        var depth = 0
-        var inString = false
-        var escaping = false
-        var cursor = open
-        while cursor < trimmed.endIndex {
-            let ch = trimmed[cursor]
-            if inString {
-                if escaping {
-                    escaping = false
-                } else if ch == "\\" {
-                    escaping = true
-                } else if ch == "\"" {
-                    inString = false
-                }
-            } else {
-                if ch == "\"" {
-                    inString = true
-                } else if ch == "{" {
-                    depth += 1
-                } else if ch == "}" {
-                    depth -= 1
-                    if depth == 0 {
-                        return String(trimmed[open...cursor])
-                    }
-                }
-            }
-            cursor = trimmed.index(after: cursor)
-        }
-    }
-
-    return trimmed
-}
 
 #endif

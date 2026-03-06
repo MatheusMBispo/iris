@@ -126,6 +126,30 @@ struct OpenAIProviderTests {
         #expect(normalizedBody.contains(imageData.base64EncodedString()))
         #expect(normalizedBody.contains("gpt-4o"))
     }
+
+    @Test func proseWrappedQuotedNumberIsNormalized() async throws {
+        let content = "Here is the JSON:\n```json\n{\"storeName\":\"Fresh Market\",\"totalAmount\":\"$45.78\"}\n```"
+        let responseBody = try JSONSerialization.data(withJSONObject: [
+            "choices": [["message": ["content": content]]]
+        ])
+        let session = makeMockSession { request in
+            let response = HTTPURLResponse(
+                url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (response, responseBody)
+        }
+        let provider = IrisProvider.openAI(apiKey: "sk-test", model: "gpt-4o", session: session)
+        let result = try await provider.parse(minimalJPEGData(), PromptBuilder.build(for: OpenAITypedReceipt.self))
+        let data = try #require(result.data(using: .utf8))
+        let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(object["storeName"] as? String == "Fresh Market")
+        #expect((object["totalAmount"] as? NSNumber)?.doubleValue == 45.78)
+    }
+}
+
+@Parseable
+struct OpenAITypedReceipt {
+    let storeName: String?
+    let totalAmount: Double?
 }
 
 // MARK: - Test Helpers (Mirrored from IrisClientTests.swift — local private copies)

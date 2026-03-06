@@ -2,6 +2,10 @@ import Testing
 import Foundation
 @testable import Iris
 
+#if canImport(FoundationModels)
+import FoundationModels
+#endif
+
 private let integrationAPIKey: String? = {
     let raw = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"]
     let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -12,6 +16,14 @@ private let integrationAPIKey: String? = {
 }()
 
 private let integrationEnabled = integrationAPIKey != nil
+private let appleFoundationModelsSmokeRequested = ProcessInfo.processInfo.environment["IRIS_RUN_APPLE_FM_SMOKE"] == "1"
+
+#if canImport(FoundationModels)
+@available(iOS 26.0, macOS 26.0, *)
+private let appleFoundationModelsEnabled = appleFoundationModelsSmokeRequested && SystemLanguageModel.default.isAvailable
+#else
+private let appleFoundationModelsEnabled = false
+#endif
 
 extension Tag {
     @Tag static var integration: Self
@@ -19,26 +31,30 @@ extension Tag {
 
 // MARK: - Integration test structs
 
-private struct SupermarketReceipt: Decodable {
+@Parseable
+struct SupermarketReceipt {
     let storeName: String?
     let totalAmount: Double?
     let date: String?
 }
 
-private struct RestaurantReceipt: Decodable {
+@Parseable
+struct RestaurantReceipt {
     let restaurantName: String?
     let totalAmount: Double?
     let tip: Double?
 }
 
-private struct ServiceInvoice: Decodable {
+@Parseable
+struct ServiceInvoice {
     let providerName: String?
     let invoiceNumber: String?
     let totalAmount: Double?
     let dueDate: String?
 }
 
-private struct LowQualityReceipt: Decodable {
+@Parseable
+struct LowQualityReceipt {
     let storeName: String?
     let totalAmount: Double?
     let items: [String]?
@@ -113,4 +129,32 @@ struct IntegrationTests {
         // Verify ambiguous content yields nil in at least one Optional field.
         #expect(result.storeName == nil || result.totalAmount == nil || result.items == nil)
     }
+
+#if canImport(FoundationModels)
+    @available(iOS 26.0, macOS 26.0, *)
+    @Test(
+        "apple Foundation Models parses supermarket receipt end-to-end",
+        .enabled(if: appleFoundationModelsEnabled)
+    )
+    func integration_parseSupermarketReceiptWithAppleFoundationModels() async throws {
+        let url = try fixtureURL("supermarket-receipt.jpg")
+        let iris = IrisClient(provider: .appleFoundationModels(), debugMode: true)
+        let result = try await iris.parse(fileURL: url, as: SupermarketReceipt.self)
+        #expect(result.storeName?.isEmpty == false)
+        #expect(result.totalAmount != nil)
+    }
+
+    @available(iOS 26.0, macOS 26.0, *)
+    @Test(
+        "apple Foundation Models parses invoice end-to-end",
+        .enabled(if: appleFoundationModelsEnabled)
+    )
+    func integration_parseInvoiceWithAppleFoundationModels() async throws {
+        let url = try fixtureURL("invoice.jpg")
+        let iris = IrisClient(provider: .appleFoundationModels(), debugMode: true)
+        let result = try await iris.parse(fileURL: url, as: ServiceInvoice.self)
+        #expect(result.providerName?.isEmpty == false || result.invoiceNumber?.isEmpty == false)
+        #expect(result.totalAmount != nil)
+    }
+#endif
 }

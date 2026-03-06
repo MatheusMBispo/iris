@@ -126,6 +126,30 @@ struct GeminiProviderTests {
         // API key must NOT be in Authorization header
         #expect(capturedRequest?.value(forHTTPHeaderField: "Authorization") == nil)
     }
+
+    @Test func proseWrappedQuotedNumberIsNormalized() async throws {
+        let content = "Result:\n```json\n{\"storeName\":\"Fresh Market\",\"totalAmount\":\"42,50\"}\n```"
+        let responseBody = try JSONSerialization.data(withJSONObject: [
+            "candidates": [["content": ["parts": [["text": content]]]]]
+        ])
+        let session = makeMockSession { request in
+            let response = HTTPURLResponse(
+                url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (response, responseBody)
+        }
+        let provider = IrisProvider.gemini(apiKey: "AIza-test", model: "gemini-2.0-flash", session: session)
+        let result = try await provider.parse(minimalJPEGData(), PromptBuilder.build(for: GeminiTypedReceipt.self))
+        let data = try #require(result.data(using: .utf8))
+        let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(object["storeName"] as? String == "Fresh Market")
+        #expect((object["totalAmount"] as? NSNumber)?.doubleValue == 42.5)
+    }
+}
+
+@Parseable
+struct GeminiTypedReceipt {
+    let storeName: String?
+    let totalAmount: Double?
 }
 
 // MARK: - Test Helpers (Mirrored from IrisClientTests.swift — local private copies)

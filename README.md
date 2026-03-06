@@ -20,6 +20,8 @@ let receipt = try await iris.parse(fileURL: receiptImageURL, as: Receipt.self)
 print(receipt.storeName ?? "Unknown store") // "Whole Foods Market"
 ```
 
+> For the most robust typed extraction, prefer `@Parseable` on models that include `Int`, `Double`, or `Bool` fields.
+
 ```swift
 // Platform-specific overloads also available:
 // iOS:   iris.parse(image: uiImage, as: Receipt.self)
@@ -129,6 +131,14 @@ import Iris
     #expect(receipt.items == nil)
 }
 ```
+
+To run the opt-in Apple Foundation Models smoke test locally:
+
+```bash
+IRIS_RUN_APPLE_FM_SMOKE=1 swift test --filter integration_parseSupermarketReceiptWithAppleFoundationModels
+```
+
+This only runs when `SystemLanguageModel.default.isAvailable` is `true` on `iOS 26+` / `macOS 26+`.
 
 ## Documentation
 
