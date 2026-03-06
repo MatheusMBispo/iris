@@ -10,7 +10,9 @@ Iris is a Swift library for turning receipts, invoices, forms, and other documen
 
 It handles image normalization, schema-aware prompting, provider integration, and JSON decoding so your app can go from image input to a strongly typed result with a single call.
 
-![Iris Architecture](assets/hero.svg)
+<p align="center">
+  <img src="assets/hero.svg" alt="Iris Architecture" width="800">
+</p>
 
 Supported providers:
 
