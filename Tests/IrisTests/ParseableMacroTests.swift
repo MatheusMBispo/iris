@@ -20,6 +20,17 @@ struct ArrayStruct {
     var counts: [Int]?
 }
 
+@Parseable
+struct InnerStruct {
+    var value: Int
+}
+
+@Parseable
+struct NestedOuter {
+    var name: String
+    var inner: InnerStruct
+}
+
 @Suite("ParseableMacroTests")
 struct ParseableMacroTests {
 
@@ -109,6 +120,15 @@ struct ParseableMacroTests {
         let schema = ArrayStruct.irisSchema
         #expect(schema.contains("\"array\""))
         #expect(schema.contains("null"))
+    }
+
+    // MARK: - Nested @Parseable Type Schema
+
+    @Test("irisSchema for nested @Parseable type contains inner schema")
+    func nestedParseableType_emitsNestedSchema() {
+        let outerSchema = NestedOuter.irisSchema
+        let innerSchema = InnerStruct.irisSchema
+        #expect(outerSchema.contains(innerSchema))
     }
 
     // MARK: - Backward Compatibility
