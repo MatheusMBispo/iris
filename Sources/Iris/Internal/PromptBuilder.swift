@@ -41,27 +41,53 @@ enum PromptBuilder {
         return formatPrompt(schema: schema)
     }
 
+    // Maps a runtime value to its JSON Schema type string using type(of:) inference.
+    // Int variants → "integer", Double/Float variants → "number", Bool → "boolean", else → "string".
+    private static func jsonSchemaType(fromValue value: Any) -> String {
+        switch type(of: value) {
+        case is Int.Type, is Int8.Type, is Int16.Type, is Int32.Type, is Int64.Type,
+             is UInt.Type, is UInt8.Type, is UInt16.Type, is UInt32.Type, is UInt64.Type:
+            return "integer"
+        case is Double.Type, is Float.Type, is CGFloat.Type:
+            return "number"
+        case is Bool.Type:
+            return "boolean"
+        default:
+            return "string"
+        }
+    }
+
     private static func schemaFromMirror(_ mirror: Mirror, required: Set<String>) -> String {
-        var fields: [(name: String, nullable: Bool)] = []
+        var fields: [(name: String, nullable: Bool, jsonType: String)] = []
 
         for child in mirror.children {
             guard let name = child.label else { continue }
             let childMirror = Mirror(reflecting: child.value)
             let isOptional = childMirror.displayStyle == .optional
-            fields.append((name: name, nullable: isOptional))
+            let jsonType: String
+            if isOptional {
+                if let unwrapped = childMirror.children.first?.value {
+                    jsonType = jsonSchemaType(fromValue: unwrapped)
+                } else {
+                    jsonType = "string"
+                }
+            } else {
+                jsonType = jsonSchemaType(fromValue: child.value)
+            }
+            fields.append((name: name, nullable: isOptional, jsonType: jsonType))
         }
 
         var propertyLines: [String] = []
         for field in fields {
             if field.nullable {
-                propertyLines.append("    \"\(field.name)\": {\"type\": [\"string\", \"null\"]}")
+                propertyLines.append("    \"\(field.name)\": {\"type\": [\"\(field.jsonType)\", \"null\"]}")
             } else {
-                propertyLines.append("    \"\(field.name)\": {\"type\": \"string\"}")
+                propertyLines.append("    \"\(field.name)\": {\"type\": \"\(field.jsonType)\"}")
             }
         }
 
         let requiredList = fields
-            .map(\ .name)
+            .map(\.name)
             .filter { required.contains($0) }
 
         var schema = "{\n  \"type\": \"object\",\n  \"properties\": {\n"
@@ -138,7 +164,7 @@ enum PromptBuilder {
             if description.hasPrefix("Array<") || description.hasPrefix("[") {
                 return []
             }
-            if description.hasPrefix("Dictionary<") || description.hasPrefix("[") {
+            if description.hasPrefix("Dictionary<") {
                 return [:]
             }
             return ""
@@ -162,7 +188,8 @@ enum PromptBuilder {
     }
 
     private static func genericPrompt(typeName: String) -> String {
-        """
+        IrisLogger.prompt.warning("[Iris] PromptBuilder: Mirror fallback produced genericPrompt for \(typeName, privacy: .public). Add @Parseable for typed schema.")
+        return """
         Extract all available data from this document image and return it as a JSON object for type \(typeName).
 
         Rules:
