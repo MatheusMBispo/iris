@@ -14,6 +14,12 @@ struct TestReceipt {
     var count: Int
 }
 
+@Parseable
+struct ArrayStruct {
+    var tags: [String]
+    var counts: [Int]?
+}
+
 @Suite("ParseableMacroTests")
 struct ParseableMacroTests {
 
@@ -86,6 +92,23 @@ struct ParseableMacroTests {
         #expect(prompt.contains("store"))
         #expect(prompt.contains("total"))
         #expect(prompt.contains("date"))
+    }
+
+    // MARK: - Backward Compatibility
+
+    // MARK: - Array Property Schema
+
+    @Test("irisSchema emits array type for [String] property")
+    func schemaArrayProperty_emitsArrayType() {
+        let schema = ArrayStruct.irisSchema
+        #expect(schema.contains("\"array\""))
+    }
+
+    @Test("irisSchema emits nullable array type for [Int]? property")
+    func schemaOptionalArrayProperty_emitsNullableArray() {
+        let schema = ArrayStruct.irisSchema
+        #expect(schema.contains("\"array\""))
+        #expect(schema.contains("null"))
     }
 
     // MARK: - Backward Compatibility
