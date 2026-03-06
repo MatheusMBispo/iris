@@ -112,38 +112,7 @@ public actor IrisClient {
             IrisLogger.image.error("Image normalization failed: \(error.localizedDescription, privacy: .public)")
             throw error
         }
-
-        let prompt = PromptBuilder.build(for: type)
-
-        // Stage 2: Provider call
-        IrisLogger.network.debug("Invoking provider parse")
-        let rawJSON: String
-        do {
-            rawJSON = try await RetryEngine.execute(policy: retryPolicy) { try await self.provider.parse(imageData, prompt) }
-        } catch {
-            IrisLogger.network.error("Provider parse failed: \(error.localizedDescription, privacy: .public)")
-            if debugMode {
-                let captured = String(describing: error)
-                lastDebugInfo = IrisDebugInfo(ocrText: captured, rawJSON: captured)
-            }
-            throw error
-        }
-        IrisLogger.network.debug("Provider parse completed")
-
-        if debugMode {
-            lastDebugInfo = IrisDebugInfo(ocrText: rawJSON, rawJSON: rawJSON)
-        }
-
-        // Stage 3: Decoding
-        IrisLogger.decode.debug("Decoding response into \(String(describing: type), privacy: .public)")
-        do {
-            let result = try ResponseDecoder.decode(type, from: rawJSON)
-            IrisLogger.decode.debug("Decode succeeded")
-            return result
-        } catch {
-            IrisLogger.decode.error("Decode failed: \(error.localizedDescription, privacy: .public)")
-            throw error
-        }
+        return try await _parse(imageData: imageData, as: type)
     }
 
     /// Parses an image file at the given URL into the target `Decodable` type.
@@ -167,38 +136,7 @@ public actor IrisClient {
             IrisLogger.image.error("Image normalization failed: \(error.localizedDescription, privacy: .public)")
             throw error
         }
-
-        let prompt = PromptBuilder.build(for: type)
-
-        // Stage 2: Provider call
-        IrisLogger.network.debug("Invoking provider parse")
-        let rawJSON: String
-        do {
-            rawJSON = try await RetryEngine.execute(policy: retryPolicy) { try await self.provider.parse(imageData, prompt) }
-        } catch {
-            IrisLogger.network.error("Provider parse failed: \(error.localizedDescription, privacy: .public)")
-            if debugMode {
-                let captured = String(describing: error)
-                lastDebugInfo = IrisDebugInfo(ocrText: captured, rawJSON: captured)
-            }
-            throw error
-        }
-        IrisLogger.network.debug("Provider parse completed")
-
-        if debugMode {
-            lastDebugInfo = IrisDebugInfo(ocrText: rawJSON, rawJSON: rawJSON)
-        }
-
-        // Stage 3: Decoding
-        IrisLogger.decode.debug("Decoding response into \(String(describing: type), privacy: .public)")
-        do {
-            let result = try ResponseDecoder.decode(type, from: rawJSON)
-            IrisLogger.decode.debug("Decode succeeded")
-            return result
-        } catch {
-            IrisLogger.decode.error("Decode failed: \(error.localizedDescription, privacy: .public)")
-            throw error
-        }
+        return try await _parse(imageData: imageData, as: type)
     }
 
     #if canImport(UIKit)
@@ -223,38 +161,7 @@ public actor IrisClient {
             IrisLogger.image.error("Image normalization failed: \(error.localizedDescription, privacy: .public)")
             throw error
         }
-
-        let prompt = PromptBuilder.build(for: type)
-
-        // Stage 2: Provider call
-        IrisLogger.network.debug("Invoking provider parse")
-        let rawJSON: String
-        do {
-            rawJSON = try await RetryEngine.execute(policy: retryPolicy) { try await self.provider.parse(imageData, prompt) }
-        } catch {
-            IrisLogger.network.error("Provider parse failed: \(error.localizedDescription, privacy: .public)")
-            if debugMode {
-                let captured = String(describing: error)
-                lastDebugInfo = IrisDebugInfo(ocrText: captured, rawJSON: captured)
-            }
-            throw error
-        }
-        IrisLogger.network.debug("Provider parse completed")
-
-        if debugMode {
-            lastDebugInfo = IrisDebugInfo(ocrText: rawJSON, rawJSON: rawJSON)
-        }
-
-        // Stage 3: Decoding
-        IrisLogger.decode.debug("Decoding response into \(String(describing: type), privacy: .public)")
-        do {
-            let result = try ResponseDecoder.decode(type, from: rawJSON)
-            IrisLogger.decode.debug("Decode succeeded")
-            return result
-        } catch {
-            IrisLogger.decode.error("Decode failed: \(error.localizedDescription, privacy: .public)")
-            throw error
-        }
+        return try await _parse(imageData: imageData, as: type)
     }
     #endif
 
@@ -280,7 +187,13 @@ public actor IrisClient {
             IrisLogger.image.error("Image normalization failed: \(error.localizedDescription, privacy: .public)")
             throw error
         }
+        return try await _parse(imageData: imageData, as: type)
+    }
+    #endif
 
+    // MARK: - Private Pipeline
+
+    private func _parse<T: Decodable>(imageData: Data, as type: T.Type) async throws -> T {
         let prompt = PromptBuilder.build(for: type)
 
         // Stage 2: Provider call
@@ -313,5 +226,4 @@ public actor IrisClient {
             throw error
         }
     }
-    #endif
 }

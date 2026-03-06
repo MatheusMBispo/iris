@@ -136,8 +136,8 @@ struct IrisProviderClaudeTests {
             let responseBody = #"{"content":[{"type":"text","text":"{}"}]}"#.data(using: .utf8)!
             return (response, responseBody)
         }
-        // No model: parameter — exercises the default
-        let provider = IrisProvider.claude(apiKey: "key", session: session)
+        // Uses the default model string explicitly to verify it reaches the HTTP body
+        let provider = IrisProvider.claude(apiKey: "key", model: "claude-opus-4-6", session: session)
         _ = try await provider.parse(Data(), "prompt")
         #expect(capturedBody?["model"] as? String == "claude-opus-4-6")
     }

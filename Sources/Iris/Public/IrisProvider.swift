@@ -39,15 +39,21 @@ public struct IrisProvider: Sendable {
 
     // MARK: - Public Factory
 
-    /// The default Claude provider implementation using the Anthropic Messages API via URLSession.
+    /// An `IrisProvider` that calls the Anthropic Claude API.
     ///
     /// Sends JPEG image data and a JSON Schema prompt to the Anthropic API and returns
     /// the raw JSON string from the provider's first text content block.
     ///
-    /// - Parameter apiKey: Your Anthropic API key.
+    /// - Parameters:
+    ///   - apiKey: Your Anthropic API key (`sk-ant-...`).
+    ///   - model: The Claude model to use. Defaults to `"claude-opus-4-6"` (highest accuracy).
+    /// - Note: Model strings evolve — verify the latest recommended version in
+    ///   [Anthropic's documentation](https://docs.anthropic.com) before shipping.
     /// - Returns: An `IrisProvider` configured to call `https://api.anthropic.com/v1/messages`.
-    public static func claude(apiKey: String) -> IrisProvider {
-        claude(apiKey: apiKey, session: .shared)
+    /// - Throws: `IrisError.invalidAPIKey` on HTTP 401; `IrisError.modelFailure` on other HTTP errors;
+    ///   `IrisError.networkError` on `URLError`.
+    public static func claude(apiKey: String, model: String = "claude-opus-4-6") -> IrisProvider {
+        claude(apiKey: apiKey, model: model, session: .shared)
     }
 
     // MARK: - Mock Factory
@@ -66,9 +72,9 @@ public struct IrisProvider: Sendable {
 
     // MARK: - Internal Factory (testable via injected session)
 
-    static func claude(apiKey: String, session: URLSession) -> IrisProvider {
+    static func claude(apiKey: String, model: String, session: URLSession) -> IrisProvider {
         IrisProvider { imageData, prompt in
-            let request = try AnthropicRequest.build(imageData: imageData, prompt: prompt, apiKey: apiKey)
+            let request = try AnthropicRequest.build(imageData: imageData, prompt: prompt, apiKey: apiKey, model: model)
             let (data, response): (Data, URLResponse)
             do {
                 (data, response) = try await session.data(for: request)
@@ -98,11 +104,11 @@ public struct IrisProvider: Sendable {
 
 private enum AnthropicRequest {
     static let endpointString = "https://api.anthropic.com/v1/messages"
-    static let model = "claude-opus-4-5"
+    static let defaultModel = "claude-opus-4-6"
     static let maxTokens = 4096
     static let anthropicVersion = "2023-06-01"
 
-    static func build(imageData: Data, prompt: String, apiKey: String) throws -> URLRequest {
+    static func build(imageData: Data, prompt: String, apiKey: String, model: String) throws -> URLRequest {
         guard let endpoint = URL(string: endpointString) else {
             throw IrisError.modelFailure(message: "Invalid Anthropic endpoint URL")
         }
@@ -113,7 +119,7 @@ private enum AnthropicRequest {
         request.setValue(anthropicVersion, forHTTPHeaderField: "anthropic-version")
 
         let body = RequestBody(
-            model: model,
+            model: model,  // forwarded from caller
             maxTokens: maxTokens,
             messages: [Message(role: "user", content: [
                 ContentBlock(type: "image", source: ImageSource(

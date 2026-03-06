@@ -167,7 +167,7 @@ struct IrisDebugInfoTests {
 // MARK: - IrisProvider.claude URLSession behavior
 
 @Suite("IrisProvider.claude URLSession behavior", .serialized)
-struct IrisProviderClaudeTests {
+struct IrisProviderClaudeURLSessionTests {
 
     @Test func claude_sendsCorrectHeaders() async throws {
         var capturedRequest: URLRequest?
@@ -177,7 +177,7 @@ struct IrisProviderClaudeTests {
             let body = #"{"content":[{"type":"text","text":"{}"}]}"#.data(using: .utf8)!
             return (response, body)
         }
-        let model = IrisProvider.claude(apiKey: "test-key", session: session)
+        let model = IrisProvider.claude(apiKey: "test-key", model: "claude-opus-4-6", session: session)
         _ = try await model.parse(Data(), "prompt")
         #expect(capturedRequest?.httpMethod == "POST")
         #expect(capturedRequest?.url?.absoluteString == "https://api.anthropic.com/v1/messages")
@@ -197,7 +197,7 @@ struct IrisProviderClaudeTests {
             let responseBody = #"{"content":[{"type":"text","text":"{}"}]}"#.data(using: .utf8)!
             return (response, responseBody)
         }
-        let model = IrisProvider.claude(apiKey: "key", session: session)
+        let model = IrisProvider.claude(apiKey: "key", model: "claude-opus-4-6", session: session)
         _ = try await model.parse(imageData, "prompt")
         let messages = requestBody?["messages"] as? [[String: Any]]
         let content = messages?.first?["content"] as? [[String: Any]]
@@ -215,7 +215,7 @@ struct IrisProviderClaudeTests {
             let body = "{\"content\":[{\"type\":\"text\",\"text\":\"\(expectedJSON.replacingOccurrences(of: "\"", with: "\\\""))\"}]}".data(using: .utf8)!
             return (response, body)
         }
-        let model = IrisProvider.claude(apiKey: "key", session: session)
+        let model = IrisProvider.claude(apiKey: "key", model: "claude-opus-4-6", session: session)
         let result = try await model.parse(Data(), "prompt")
         #expect(result == expectedJSON)
     }
@@ -229,7 +229,7 @@ struct IrisProviderClaudeTests {
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             return (response, body)
         }
-        let model = IrisProvider.claude(apiKey: "key", session: session)
+        let model = IrisProvider.claude(apiKey: "key", model: "claude-opus-4-6", session: session)
         let result = try await model.parse(Data(), PromptBuilder.build(for: ClaudeTypedReceipt.self))
         let data = try #require(result.data(using: .utf8))
         let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
@@ -242,7 +242,7 @@ struct IrisProviderClaudeTests {
             let response = HTTPURLResponse(url: request.url!, statusCode: 401, httpVersion: nil, headerFields: nil)!
             return (response, Data())
         }
-        let model = IrisProvider.claude(apiKey: "bad-key", session: session)
+        let model = IrisProvider.claude(apiKey: "bad-key", model: "claude-opus-4-6", session: session)
         var caught: (any Error)?
         do { _ = try await model.parse(Data(), "prompt") } catch { caught = error }
         #expect(caught is IrisError)
@@ -256,7 +256,7 @@ struct IrisProviderClaudeTests {
             let response = HTTPURLResponse(url: request.url!, statusCode: 500, httpVersion: nil, headerFields: nil)!
             return (response, "Internal Server Error".data(using: .utf8)!)
         }
-        let model = IrisProvider.claude(apiKey: "key", session: session)
+        let model = IrisProvider.claude(apiKey: "key", model: "claude-opus-4-6", session: session)
         var caught: (any Error)?
         do { _ = try await model.parse(Data(), "prompt") } catch { caught = error }
         if case .modelFailure(let message) = caught as? IrisError {
@@ -270,7 +270,7 @@ struct IrisProviderClaudeTests {
         let session = makeMockSession { _ in
             throw URLError(.notConnectedToInternet)
         }
-        let model = IrisProvider.claude(apiKey: "key", session: session)
+        let model = IrisProvider.claude(apiKey: "key", model: "claude-opus-4-6", session: session)
         var caught: (any Error)?
         do { _ = try await model.parse(Data(), "prompt") } catch { caught = error }
         if case .networkError(let underlying) = caught as? IrisError {
