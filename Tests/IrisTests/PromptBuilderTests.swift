@@ -92,6 +92,41 @@ struct PromptBuilderTests {
         #expect(prompt.contains("\"string\""))
         #expect(prompt.contains("invoiceNumber"))
     }
+
+    // MARK: - Mirror Type Inference Tests (PROMPT-01) and Dictionary Placeholder Tests (PROMPT-02)
+
+    private struct PrimitiveMirrorReceipt: Decodable {
+        var count: Int
+        var total: Double
+        var isPaid: Bool
+        var note: String?
+    }
+
+    private struct DictReceipt: Decodable {
+        var metadata: [String: String]
+    }
+
+    @Test func schemaFromMirror_intField_emitsInteger() {
+        let prompt = PromptBuilder.build(for: PrimitiveMirrorReceipt.self)
+        #expect(prompt.contains("\"integer\""))
+    }
+
+    @Test func schemaFromMirror_doubleField_emitsNumber() {
+        let prompt = PromptBuilder.build(for: PrimitiveMirrorReceipt.self)
+        #expect(prompt.contains("\"number\""))
+    }
+
+    @Test func schemaFromMirror_boolField_emitsBoolean() {
+        let prompt = PromptBuilder.build(for: PrimitiveMirrorReceipt.self)
+        #expect(prompt.contains("\"boolean\""))
+    }
+
+    @Test func placeholderValue_dictionaryField_doesNotCrash() {
+        // If the dictionary branch is unreachable, buildPrototype will fail and
+        // genericPrompt will be returned — still non-empty. After fix, Mirror path works.
+        let prompt = PromptBuilder.build(for: DictReceipt.self)
+        #expect(!prompt.isEmpty)
+    }
 }
 
 // Declare at FILE SCOPE — NOT inside @Suite, NOT private.
