@@ -130,6 +130,7 @@ struct IntegrationTests {
         #expect(result.storeName == nil || result.totalAmount == nil || result.items == nil)
     }
 
+#if canImport(FoundationModels)
     @available(iOS 26.0, macOS 26.0, *)
     @Test(
         "apple Foundation Models parses supermarket receipt end-to-end",
@@ -155,4 +156,5 @@ struct IntegrationTests {
         #expect(result.providerName?.isEmpty == false || result.invoiceNumber?.isEmpty == false)
         #expect(result.totalAmount != nil)
     }
+#endif
 }
