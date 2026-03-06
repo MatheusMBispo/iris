@@ -147,7 +147,7 @@ struct OllamaTypedReceipt {
 
 private actor HandlerStorage {
     private var handler: ((URLRequest) async throws -> (HTTPURLResponse, Data))?
-    func setHandler(_ h: @escaping (URLRequest) async throws -> (HTTPURLResponse, Data)) {
+    func setHandler(_ h: sending @escaping (URLRequest) async throws -> (HTTPURLResponse, Data)) {
         handler = h
     }
     func callHandler(with request: URLRequest) async throws -> (HTTPURLResponse, Data) {
@@ -181,7 +181,7 @@ private final class OllamaMockURLProtocol: URLProtocol, @unchecked Sendable {
 }
 
 private func makeMockSession(
-    handler: @escaping (URLRequest) async throws -> (HTTPURLResponse, Data)
+    handler: sending @escaping (URLRequest) async throws -> (HTTPURLResponse, Data)
 ) async -> URLSession {
     await OllamaMockURLProtocol.storage.setHandler(handler)
     let config = URLSessionConfiguration.ephemeral
