@@ -220,6 +220,23 @@ struct IrisProviderClaudeTests {
         #expect(result == expectedJSON)
     }
 
+    @Test func claude_normalizesQuotedNumberFromWrappedJSON() async throws {
+        let wrapped = "Here is the JSON:\n```json\n{\"storeName\":\"Fresh Market\",\"totalAmount\":\"$45.78\"}\n```"
+        let body = try JSONSerialization.data(withJSONObject: [
+            "content": [["type": "text", "text": wrapped]]
+        ])
+        let session = makeMockSession { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (response, body)
+        }
+        let model = IrisProvider.claude(apiKey: "key", session: session)
+        let result = try await model.parse(Data(), PromptBuilder.build(for: ClaudeTypedReceipt.self))
+        let data = try #require(result.data(using: .utf8))
+        let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(object["storeName"] as? String == "Fresh Market")
+        #expect((object["totalAmount"] as? NSNumber)?.doubleValue == 45.78)
+    }
+
     @Test func claude_http401_throwsInvalidAPIKey() async {
         let session = makeMockSession { request in
             let response = HTTPURLResponse(url: request.url!, statusCode: 401, httpVersion: nil, headerFields: nil)!
@@ -802,6 +819,12 @@ private actor CaptureBox<T> {
     func get() -> T? {
         value
     }
+}
+
+@Parseable
+struct ClaudeTypedReceipt {
+    let storeName: String?
+    let totalAmount: Double?
 }
 
 #if canImport(AppKit) && !canImport(UIKit)

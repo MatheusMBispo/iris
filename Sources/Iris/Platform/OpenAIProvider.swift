@@ -41,7 +41,7 @@ extension IrisProvider {
             guard let content = decoded.choices.first?.message.content else {
                 throw IrisError.modelFailure(message: "No choices in OpenAI response")
             }
-            return content
+            return normalizeProviderJSONOutput(content, schemaPrompt: prompt)
         }
     }
 }

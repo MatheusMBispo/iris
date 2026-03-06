@@ -56,7 +56,7 @@ extension IrisProvider {
             guard let text = decoded.candidates.first?.content.parts.first?.text else {
                 throw IrisError.modelFailure(message: "No candidates in Gemini response")
             }
-            return text
+            return normalizeProviderJSONOutput(text, schemaPrompt: prompt)
         }
     }
 }

@@ -89,7 +89,7 @@ public struct IrisProvider: Sendable {
             guard let text = decoded.content.first(where: { $0.type == "text" })?.text else {
                 throw IrisError.modelFailure(message: "No text content in Anthropic response")
             }
-            return text
+            return normalizeProviderJSONOutput(text, schemaPrompt: prompt)
         }
     }
 }

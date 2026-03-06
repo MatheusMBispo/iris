@@ -59,6 +59,90 @@ struct ExtractJSONHelperTests {
         #expect(result.contains("Whole Foods Market"))
         #expect(result.contains("42.0"))
     }
+
+    @Test("extracts first JSON object from surrounding prose")
+    func extractsJSONObjectFromProse() {
+        let input = "Result: {\"key\":\"value\"} Thank you."
+        let result = extractJSON(from: input)
+        #expect(result == #"{"key":"value"}"#)
+    }
+}
+
+@Suite("sanitizeProviderJSON helper")
+struct SanitizeProviderJSONHelperTests {
+
+    @Test("quoted currency string becomes JSON number for number field")
+    func quotedCurrencyStringBecomesNumber() throws {
+        let schemaPrompt = PromptBuilder.build(for: TypedReceipt.self)
+        let result = sanitizeProviderJSON(#"{"totalAmount":"$45.78","storeName":"Fresh Market"}"#, schemaPrompt: schemaPrompt)
+        let data = try #require(result?.data(using: .utf8))
+        let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(object["storeName"] as? String == "Fresh Market")
+        #expect((object["totalAmount"] as? NSNumber)?.doubleValue == 45.78)
+    }
+
+    @Test("comma decimal string becomes JSON number when unambiguous")
+    func commaDecimalBecomesNumber() throws {
+        let schemaPrompt = PromptBuilder.build(for: TypedReceipt.self)
+        let result = sanitizeProviderJSON(#"{"totalAmount":"42,50","storeName":"Fresh Market"}"#, schemaPrompt: schemaPrompt)
+        let data = try #require(result?.data(using: .utf8))
+        let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(object["storeName"] as? String == "Fresh Market")
+        #expect((object["totalAmount"] as? NSNumber)?.doubleValue == 42.5)
+    }
+
+    @Test("boolean strings become JSON booleans")
+    func booleanStringBecomesBoolean() throws {
+        let schemaPrompt = PromptBuilder.build(for: TypedFlags.self)
+        let result = sanitizeProviderJSON(#"{"isPaid":"yes"}"#, schemaPrompt: schemaPrompt)
+        let data = try #require(result?.data(using: .utf8))
+        let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(object["isPaid"] as? Bool == true)
+    }
+
+    @Test("ambiguous numeric strings are rejected")
+    func ambiguousNumericStringsAreRejected() {
+        let schemaPrompt = PromptBuilder.build(for: TypedReceipt.self)
+        let result = sanitizeProviderJSON(#"{"totalAmount":"1,234","storeName":"Fresh Market"}"#, schemaPrompt: schemaPrompt)
+        #expect(result == nil)
+    }
+
+    @Test("quoted null becomes JSON null for nullable field")
+    func quotedNullBecomesJSONNull() throws {
+        let schemaPrompt = PromptBuilder.build(for: TypedReceipt.self)
+        let result = sanitizeProviderJSON(#"{"date":"null","storeName":"Fresh Market"}"#, schemaPrompt: schemaPrompt)
+        let data = try #require(result?.data(using: .utf8))
+        let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(object["storeName"] as? String == "Fresh Market")
+        #expect(object["date"] is NSNull)
+    }
+
+    @Test("negative currency strings become JSON numbers")
+    func negativeCurrencyStringBecomesNumber() throws {
+        let schemaPrompt = PromptBuilder.build(for: TypedReceipt.self)
+        let result = sanitizeProviderJSON(#"{"totalAmount":"($12.34)","storeName":"Fresh Market"}"#, schemaPrompt: schemaPrompt)
+        let data = try #require(result?.data(using: .utf8))
+        let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect((object["totalAmount"] as? NSNumber)?.doubleValue == -12.34)
+    }
+
+    @Test("date strings remain strings for string fields")
+    func dateStringsRemainStrings() throws {
+        let schemaPrompt = PromptBuilder.build(for: TypedReceipt.self)
+        let result = sanitizeProviderJSON(#"{"date":"2026-03-06","storeName":"Fresh Market"}"#, schemaPrompt: schemaPrompt)
+        let data = try #require(result?.data(using: .utf8))
+        let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(object["date"] as? String == "2026-03-06")
+    }
+
+    @Test("true false strings become JSON booleans")
+    func trueFalseStringsBecomeBooleans() throws {
+        let schemaPrompt = PromptBuilder.build(for: TypedFlags.self)
+        let result = sanitizeProviderJSON(#"{"isPaid":"false"}"#, schemaPrompt: schemaPrompt)
+        let data = try #require(result?.data(using: .utf8))
+        let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(object["isPaid"] as? Bool == false)
+    }
 }
 
 // MARK: - buildFoundationModelsPrompt helper tests
@@ -90,6 +174,15 @@ struct BuildFoundationModelsPromptTests {
         // Must include instruction to respond with only JSON
         #expect(result.lowercased().contains("json"))
         #expect(result.contains("{") || result.contains("JSON"))
+    }
+
+    @available(iOS 26.0, macOS 26.0, *)
+    @Test("prompt instructs canonical numeric output")
+    func promptInstructsCanonicalNumericOutput() {
+        let result = buildFoundationModelsPrompt(ocrText: "text", schemaPrompt: "schema")
+        #expect(result.contains("JSON number"))
+        #expect(result.contains("currency symbols"))
+        #expect(result.contains("period (.)"))
     }
 
     @available(iOS 26.0, macOS 26.0, *)
@@ -207,6 +300,37 @@ struct AppleFMRetryLogicTests {
     }
 
     @available(iOS 26.0, macOS 26.0, *)
+    @Test("quoted numeric output is sanitized to match typed schema")
+    func quotedNumericOutputIsSanitized() async throws {
+        let provider = IrisProvider._appleFoundationModels(maxRetries: 1) { _ in
+            return #"{"title":"Receipt","total":"$45.78"}"#
+        }
+        let iris = IrisClient(provider: provider)
+        let result = try await iris.parse(data: try fixtureJPEGData(), mimeType: "image/jpeg", as: TypedDoc.self)
+        #expect(result.total == 45.78)
+    }
+
+    @available(iOS 26.0, macOS 26.0, *)
+    @Test("ambiguous numeric output triggers modelFailure instead of guessing")
+    func ambiguousNumericOutputTriggersFailure() async throws {
+        let provider = IrisProvider._appleFoundationModels(maxRetries: 1) { _ in
+            return #"{"title":"Receipt","total":"1,234"}"#
+        }
+        let iris = IrisClient(provider: provider)
+        var caught: (any Error)?
+        do {
+            _ = try await iris.parse(data: try fixtureJPEGData(), mimeType: "image/jpeg", as: TypedDoc.self)
+        } catch {
+            caught = error
+        }
+        if case .modelFailure = caught as? IrisError {
+            // expected
+        } else {
+            Issue.record("Expected IrisError.modelFailure, got: \(String(describing: caught))")
+        }
+    }
+
+    @available(iOS 26.0, macOS 26.0, *)
     @Test("maxRetries=1 — no retry on invalid JSON, throws immediately")
     func maxRetriesOne_noRetryOnInvalidJSON() async throws {
         let jpeg = try fixtureJPEGData()
@@ -238,4 +362,22 @@ private actor CaptureBox<T> {
     private var value: T?
     func set(_ v: T) { value = v }
     func get() -> T? { value }
+}
+
+@Parseable
+struct TypedReceipt {
+    let storeName: String?
+    let totalAmount: Double?
+    let date: String?
+}
+
+@Parseable
+struct TypedFlags {
+    let isPaid: Bool?
+}
+
+@Parseable
+struct TypedDoc {
+    let title: String?
+    let total: Double?
 }

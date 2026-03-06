@@ -42,7 +42,7 @@ extension IrisProvider {
                 throw IrisError.modelFailure(message: body)
             }
             let decoded = try JSONDecoder.iris.decode(OllamaResponse.self, from: data)
-            return decoded.message.content
+            return normalizeProviderJSONOutput(decoded.message.content, schemaPrompt: prompt)
         }
     }
 }
