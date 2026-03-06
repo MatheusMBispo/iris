@@ -43,6 +43,7 @@ private struct PropertyInfo {
     let name: String
     let isOptional: Bool
     let baseTypeName: String
+    let nestedTypeName: String?  // nil for arrays/primitives; reserved for nested struct expansion (Plan 02)
 }
 
 /// Extracts stored var/let properties. Skips static and computed properties.
@@ -58,10 +59,17 @@ private func extractProperties(from declaration: some DeclGroupSyntax) -> [Prope
                 let typeAnnotation = binding.typeAnnotation
             else { return nil }
             let (isOpt, baseType) = optionalInfo(typeAnnotation.type)
+            let schemaTypeName: String
+            if baseType.is(ArrayTypeSyntax.self) {
+                schemaTypeName = "array"
+            } else {
+                schemaTypeName = jsonSchemaType(for: baseType.trimmedDescription)
+            }
             return PropertyInfo(
                 name: pattern.identifier.text,
                 isOptional: isOpt,
-                baseTypeName: jsonSchemaType(for: baseType.trimmedDescription)
+                baseTypeName: schemaTypeName,
+                nestedTypeName: nil
             )
         }
 }
