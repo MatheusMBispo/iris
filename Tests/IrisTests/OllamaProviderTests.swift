@@ -14,7 +14,7 @@ struct OllamaProviderTests {
     // MARK: - Tests
 
     @Test func successfulParse() async throws {
-        let session = makeMockSession { request in
+        let session = await makeMockSession { request in
             let response = HTTPURLResponse(
                 url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             return (response, ollamaSuccessJSON)
@@ -29,7 +29,7 @@ struct OllamaProviderTests {
     }
 
     @Test func http500ThrowsModelFailure() async throws {
-        let session = makeMockSession { request in
+        let session = await makeMockSession { request in
             let response = HTTPURLResponse(
                 url: request.url!, statusCode: 500, httpVersion: nil, headerFields: nil)!
             return (response, "Internal Server Error".data(using: .utf8)!)
@@ -53,7 +53,7 @@ struct OllamaProviderTests {
     }
 
     @Test func connectionRefusedThrowsNetworkError() async throws {
-        let session = makeMockSession { _ in
+        let session = await makeMockSession { _ in
             throw URLError(.cannotConnectToHost)
         }
         let provider = IrisProvider.ollama(
@@ -77,7 +77,7 @@ struct OllamaProviderTests {
     @Test func customEndpointIsUsed() async throws {
         let customEndpoint = URL(string: "http://custom-host:9999/api/chat")!
         var capturedRequest: URLRequest?
-        let session = makeMockSession { request in
+        let session = await makeMockSession { request in
             capturedRequest = request
             let response = HTTPURLResponse(
                 url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
@@ -91,7 +91,7 @@ struct OllamaProviderTests {
     @Test func requestBodyContainsStreamFalseAndBase64Image() async throws {
         var capturedRequest: URLRequest?
         let imageData = minimalJPEGData()
-        let session = makeMockSession { request in
+        let session = await makeMockSession { request in
             capturedRequest = request
             let response = HTTPURLResponse(
                 url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
@@ -119,7 +119,7 @@ struct OllamaProviderTests {
         let responseBody = try JSONSerialization.data(withJSONObject: [
             "message": ["content": content]
         ])
-        let session = makeMockSession { request in
+        let session = await makeMockSession { request in
             let response = HTTPURLResponse(
                 url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             return (response, responseBody)
@@ -145,29 +145,45 @@ struct OllamaTypedReceipt {
 
 // MARK: - Test Helpers (Mirrored from IrisClientTests.swift — local private copies)
 
-private final class OllamaMockURLProtocol: URLProtocol {
-    nonisolated(unsafe) static var requestHandler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+private actor HandlerStorage {
+    private var handler: ((URLRequest) async throws -> (HTTPURLResponse, Data))?
+    func setHandler(_ h: @escaping (URLRequest) async throws -> (HTTPURLResponse, Data)) {
+        handler = h
+    }
+    func callHandler(with request: URLRequest) async throws -> (HTTPURLResponse, Data) {
+        guard let handler else { throw URLError(.unknown) }
+        return try await handler(request)
+    }
+}
+
+private final class OllamaMockURLProtocol: URLProtocol, @unchecked Sendable {
+    static let storage = HandlerStorage()
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
-        guard let handler = OllamaMockURLProtocol.requestHandler else { return }
-        do {
-            let (response, data) = try handler(request)
-            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: data)
-            client?.urlProtocolDidFinishLoading(self)
-        } catch {
-            client?.urlProtocol(self, didFailWithError: error)
+        let req = request
+        let cli = client
+        Task {
+            do {
+                let (response, data) = try await OllamaMockURLProtocol.storage.callHandler(with: req)
+                cli?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+                cli?.urlProtocol(self, didLoad: data)
+                cli?.urlProtocolDidFinishLoading(self)
+            } catch {
+                cli?.urlProtocol(self, didFailWithError: error)
+            }
         }
     }
 
     override func stopLoading() {}
 }
 
-private func makeMockSession(handler: @escaping (URLRequest) throws -> (HTTPURLResponse, Data)) -> URLSession {
-    OllamaMockURLProtocol.requestHandler = handler
+private func makeMockSession(
+    handler: @escaping (URLRequest) async throws -> (HTTPURLResponse, Data)
+) async -> URLSession {
+    await OllamaMockURLProtocol.storage.setHandler(handler)
     let config = URLSessionConfiguration.ephemeral
     config.protocolClasses = [OllamaMockURLProtocol.self]
     return URLSession(configuration: config)

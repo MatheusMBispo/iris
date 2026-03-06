@@ -1,9 +1,6 @@
 import Foundation
 import Testing
 @testable import Iris
-#if canImport(Darwin)
-import Darwin
-#endif
 
 // MARK: - IrisError shape tests
 
@@ -394,30 +391,26 @@ struct IrisClientBehaviorTests {
         #expect(String(describing: type(of: client)) == "IrisClient")
     }
 
-    @Test("public init() with missing env key throws invalidAPIKey on parse")
-    func publicInit_missingEnvKey_throwsInvalidAPIKey() async {
-        await withEnvironmentValue("ANTHROPIC_API_KEY", nil) {
-            let client = IrisClient()
-            var caught: (any Error)?
-            do {
-                _ = try await client.parse(data: minimalJPEGData(), mimeType: "image/jpeg", as: SimpleStruct.self)
-            } catch {
-                caught = error
-            }
-            if case .invalidAPIKey = caught as? IrisError {
-                // expected
-            } else {
-                Issue.record("Expected IrisError.invalidAPIKey, got: \(String(describing: caught))")
-            }
+    @Test("init(environment:) with missing key throws invalidAPIKey on parse")
+    func envInit_missingKey_throwsInvalidAPIKey() async {
+        let client = IrisClient(environment: [:])
+        var caught: (any Error)?
+        do {
+            _ = try await client.parse(data: minimalJPEGData(), mimeType: "image/jpeg", as: SimpleStruct.self)
+        } catch {
+            caught = error
+        }
+        if case .invalidAPIKey = caught as? IrisError {
+            // expected
+        } else {
+            Issue.record("Expected IrisError.invalidAPIKey, got: \(String(describing: caught))")
         }
     }
 
-    @Test("public init() reads ANTHROPIC_API_KEY when present")
-    func publicInit_readsEnvironmentKey() async {
-        await withEnvironmentValue("ANTHROPIC_API_KEY", "sk-public-env") {
-            let client = IrisClient()
-            #expect(String(describing: type(of: client)) == "IrisClient")
-        }
+    @Test("init(environment:) with valid key configures client")
+    func envInit_validKey_configuresClient() async {
+        let client = IrisClient(environment: ["ANTHROPIC_API_KEY": "sk-public-env"])
+        #expect(String(describing: type(of: client)) == "IrisClient")
     }
 
     // MARK: AC #5 — overloads for all input forms
@@ -692,19 +685,24 @@ struct DebugModeTests {
             #expect(info == nil)
         }
 
-        await withEnvironmentValue("ANTHROPIC_API_KEY", nil) {
-            let envClient = IrisClient()
-            _ = try? await envClient.parse(data: minimalJPEGData(), mimeType: "image/jpeg", as: Receipt.self)
-            let envInfo = await envClient.lastDebugInfo
-            #expect(envInfo == nil)
-        }
+        let envClient = IrisClient(environment: [:])
+        _ = try? await envClient.parse(data: minimalJPEGData(), mimeType: "image/jpeg", as: Receipt.self)
+        let envInfo = await envClient.lastDebugInfo
+        #expect(envInfo == nil)
     }
 }
 
 // MARK: - Test Helpers
 
 private actor HandlerStorage {
-    var handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+    private var handler: ((URLRequest) async throws -> (HTTPURLResponse, Data))?
+    func setHandler(_ h: sending @escaping (URLRequest) async throws -> (HTTPURLResponse, Data)) {
+        handler = h
+    }
+    func callHandler(with request: URLRequest) async throws -> (HTTPURLResponse, Data) {
+        guard let handler else { throw URLError(.unknown) }
+        return try await handler(request)
+    }
 }
 
 private final class MockURLProtocol: URLProtocol, @unchecked Sendable {
@@ -717,13 +715,8 @@ private final class MockURLProtocol: URLProtocol, @unchecked Sendable {
         let req = request
         let cli = client
         Task {
-            let h = await MockURLProtocol.storage.handler
-            guard let handler = h else {
-                cli?.urlProtocol(self, didFailWithError: URLError(.unknown))
-                return
-            }
             do {
-                let (response, data) = try handler(req)
+                let (response, data) = try await MockURLProtocol.storage.callHandler(with: req)
                 cli?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
                 cli?.urlProtocol(self, didLoad: data)
                 cli?.urlProtocolDidFinishLoading(self)
@@ -737,9 +730,9 @@ private final class MockURLProtocol: URLProtocol, @unchecked Sendable {
 }
 
 private func makeMockSession(
-    handler: @escaping (URLRequest) throws -> (HTTPURLResponse, Data)
+    handler: sending @escaping (URLRequest) async throws -> (HTTPURLResponse, Data)
 ) async -> URLSession {
-    await MockURLProtocol.storage.handler = handler
+    await MockURLProtocol.storage.setHandler(handler)
     let config = URLSessionConfiguration.ephemeral
     config.protocolClasses = [MockURLProtocol.self]
     return URLSession(configuration: config)
@@ -802,25 +795,6 @@ private func writeJPEGToTempFile(_ data: Data) throws -> URL {
         .appendingPathComponent("iris_test_\(UUID().uuidString).jpg")
     try data.write(to: url)
     return url
-}
-
-private func withEnvironmentValue(_ key: String, _ value: String?, operation: () async -> Void) async {
-    let previous = ProcessInfo.processInfo.environment[key]
-    if let value {
-        setenv(key, value, 1)
-    } else {
-        unsetenv(key)
-    }
-
-    defer {
-        if let previous {
-            setenv(key, previous, 1)
-        } else {
-            unsetenv(key)
-        }
-    }
-
-    await operation()
 }
 
 private actor CaptureBox<T> {

@@ -112,26 +112,23 @@ struct IrisProviderMockAdditionalTests {
 struct IrisProviderClaudeTests {
 
     @Test func claude_sendsCustomModelInRequestBody() async throws {
-        var capturedBody: [String: Any]?
+        var capturedBodyData: Data?
         let session = await makeMockSession { request in
-            if let data = bodyData(from: request) {
-                capturedBody = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-            }
+            capturedBodyData = bodyData(from: request)
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             let responseBody = #"{"content":[{"type":"text","text":"{}"}]}"#.data(using: .utf8)!
             return (response, responseBody)
         }
         let provider = IrisProvider.claude(apiKey: "key", model: "claude-custom-test", session: session)
         _ = try await provider.parse(Data(), "prompt")
+        let capturedBody = capturedBodyData.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
         #expect(capturedBody?["model"] as? String == "claude-custom-test")
     }
 
     @Test func claude_defaultModel_isClaudeOpus46() async throws {
-        var capturedBody: [String: Any]?
+        var capturedBodyData: Data?
         let session = await makeMockSession { request in
-            if let data = bodyData(from: request) {
-                capturedBody = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-            }
+            capturedBodyData = bodyData(from: request)
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             let responseBody = #"{"content":[{"type":"text","text":"{}"}]}"#.data(using: .utf8)!
             return (response, responseBody)
@@ -139,6 +136,7 @@ struct IrisProviderClaudeTests {
         // Uses the default model string explicitly to verify it reaches the HTTP body
         let provider = IrisProvider.claude(apiKey: "key", model: "claude-opus-4-6", session: session)
         _ = try await provider.parse(Data(), "prompt")
+        let capturedBody = capturedBodyData.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
         #expect(capturedBody?["model"] as? String == "claude-opus-4-6")
     }
 }
@@ -152,7 +150,12 @@ private actor CaptureBox<T> {
 }
 
 private actor HandlerStorage {
-    var handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+    private var handler: ((URLRequest) async throws -> (HTTPURLResponse, Data))?
+    func setHandler(_ h: sending @escaping (URLRequest) async throws -> (HTTPURLResponse, Data)) { handler = h }
+    func callHandler(with req: URLRequest) async throws -> (HTTPURLResponse, Data) {
+        guard let handler else { throw URLError(.unknown) }
+        return try await handler(req)
+    }
 }
 
 private final class IrisProviderMockURLProtocol: URLProtocol, @unchecked Sendable {
@@ -165,13 +168,8 @@ private final class IrisProviderMockURLProtocol: URLProtocol, @unchecked Sendabl
         let req = request
         let cli = client
         Task {
-            let h = await IrisProviderMockURLProtocol.storage.handler
-            guard let handler = h else {
-                cli?.urlProtocol(self, didFailWithError: URLError(.unknown))
-                return
-            }
             do {
-                let (response, data) = try handler(req)
+                let (response, data) = try await IrisProviderMockURLProtocol.storage.callHandler(with: req)
                 cli?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
                 cli?.urlProtocol(self, didLoad: data)
                 cli?.urlProtocolDidFinishLoading(self)
@@ -185,9 +183,9 @@ private final class IrisProviderMockURLProtocol: URLProtocol, @unchecked Sendabl
 }
 
 private func makeMockSession(
-    handler: @escaping (URLRequest) throws -> (HTTPURLResponse, Data)
+    handler: sending @escaping (URLRequest) async throws -> (HTTPURLResponse, Data)
 ) async -> URLSession {
-    await IrisProviderMockURLProtocol.storage.handler = handler
+    await IrisProviderMockURLProtocol.storage.setHandler(handler)
     let config = URLSessionConfiguration.ephemeral
     config.protocolClasses = [IrisProviderMockURLProtocol.self]
     return URLSession(configuration: config)

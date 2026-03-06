@@ -107,10 +107,10 @@ struct OpenAIProviderTests {
     }
 
     @Test func requestBodyContainsBase64ImageAndModel() async throws {
-        var capturedRequest: URLRequest?
+        var capturedBodyData: Data?
         let imageData = minimalJPEGData()
         let session = await makeMockSession { request in
-            capturedRequest = request
+            capturedBodyData = bodyData(from: request)
             let response = HTTPURLResponse(
                 url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             return (response, openAISuccessJSON)
@@ -118,9 +118,8 @@ struct OpenAIProviderTests {
         let provider = IrisProvider.openAI(apiKey: "sk-test", model: "gpt-4o", session: session)
         _ = try await provider.parse(imageData, "test prompt")
 
-        let body = bodyData(from: capturedRequest!)
-        #expect(body != nil)
-        let bodyString = String(data: body!, encoding: .utf8)!
+        #expect(capturedBodyData != nil)
+        let bodyString = String(data: capturedBodyData!, encoding: .utf8)!
         // JSONEncoder escapes forward slashes (/ → \/), normalize before comparing base64
         let normalizedBody = bodyString.replacingOccurrences(of: "\\/", with: "/")
         #expect(normalizedBody.contains(imageData.base64EncodedString()))
@@ -154,8 +153,19 @@ struct OpenAITypedReceipt {
 
 // MARK: - Test Helpers (Mirrored from IrisClientTests.swift — local private copies)
 
+private actor CaptureBox<T> {
+    private var value: T?
+    func set(_ v: T) { value = v }
+    func get() -> T? { value }
+}
+
 private actor HandlerStorage {
-    var handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+    private var handler: ((URLRequest) async throws -> (HTTPURLResponse, Data))?
+    func setHandler(_ h: sending @escaping (URLRequest) async throws -> (HTTPURLResponse, Data)) { handler = h }
+    func callHandler(with req: URLRequest) async throws -> (HTTPURLResponse, Data) {
+        guard let handler else { throw URLError(.unknown) }
+        return try await handler(req)
+    }
 }
 
 private final class OpenAIMockURLProtocol: URLProtocol, @unchecked Sendable {
@@ -168,13 +178,8 @@ private final class OpenAIMockURLProtocol: URLProtocol, @unchecked Sendable {
         let req = request
         let cli = client
         Task {
-            let h = await OpenAIMockURLProtocol.storage.handler
-            guard let handler = h else {
-                cli?.urlProtocol(self, didFailWithError: URLError(.unknown))
-                return
-            }
             do {
-                let (response, data) = try handler(req)
+                let (response, data) = try await OpenAIMockURLProtocol.storage.callHandler(with: req)
                 cli?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
                 cli?.urlProtocol(self, didLoad: data)
                 cli?.urlProtocolDidFinishLoading(self)
@@ -188,9 +193,9 @@ private final class OpenAIMockURLProtocol: URLProtocol, @unchecked Sendable {
 }
 
 private func makeMockSession(
-    handler: @escaping (URLRequest) throws -> (HTTPURLResponse, Data)
+    handler: sending @escaping (URLRequest) async throws -> (HTTPURLResponse, Data)
 ) async -> URLSession {
-    await OpenAIMockURLProtocol.storage.handler = handler
+    await OpenAIMockURLProtocol.storage.setHandler(handler)
     let config = URLSessionConfiguration.ephemeral
     config.protocolClasses = [OpenAIMockURLProtocol.self]
     return URLSession(configuration: config)

@@ -22,7 +22,7 @@ struct GeminiProviderTests {
     // MARK: - Tests
 
     @Test func successfulParse() async throws {
-        let session = makeMockSession { request in
+        let session = await makeMockSession { request in
             let response = HTTPURLResponse(
                 url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             return (response, geminiSuccessJSON)
@@ -33,7 +33,7 @@ struct GeminiProviderTests {
     }
 
     @Test func http403WithApiKeyErrorThrowsInvalidAPIKey() async throws {
-        let session = makeMockSession { request in
+        let session = await makeMockSession { request in
             let response = HTTPURLResponse(
                 url: request.url!, statusCode: 403, httpVersion: nil, headerFields: nil)!
             return (response, gemini403JSON)
@@ -53,7 +53,7 @@ struct GeminiProviderTests {
     }
 
     @Test func http400WithApiKeyErrorThrowsInvalidAPIKey() async throws {
-        let session = makeMockSession { request in
+        let session = await makeMockSession { request in
             let response = HTTPURLResponse(
                 url: request.url!, statusCode: 400, httpVersion: nil, headerFields: nil)!
             return (response, gemini400JSON)
@@ -73,7 +73,7 @@ struct GeminiProviderTests {
     }
 
     @Test func http500ThrowsModelFailure() async throws {
-        let session = makeMockSession { request in
+        let session = await makeMockSession { request in
             let response = HTTPURLResponse(
                 url: request.url!, statusCode: 500, httpVersion: nil, headerFields: nil)!
             return (response, "Internal Server Error".data(using: .utf8)!)
@@ -93,7 +93,7 @@ struct GeminiProviderTests {
     }
 
     @Test func urlErrorThrowsNetworkError() async throws {
-        let session = makeMockSession { _ in
+        let session = await makeMockSession { _ in
             throw URLError(.notConnectedToInternet)
         }
         let provider = IrisProvider.gemini(apiKey: "AIza-test", model: "gemini-2.0-flash", session: session)
@@ -112,7 +112,7 @@ struct GeminiProviderTests {
 
     @Test func apiKeyIsInURLQueryNotHeader() async throws {
         var capturedRequest: URLRequest?
-        let session = makeMockSession { request in
+        let session = await makeMockSession { request in
             capturedRequest = request
             let response = HTTPURLResponse(
                 url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
@@ -132,7 +132,7 @@ struct GeminiProviderTests {
         let responseBody = try JSONSerialization.data(withJSONObject: [
             "candidates": [["content": ["parts": [["text": content]]]]]
         ])
-        let session = makeMockSession { request in
+        let session = await makeMockSession { request in
             let response = HTTPURLResponse(
                 url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             return (response, responseBody)
@@ -154,29 +154,45 @@ struct GeminiTypedReceipt {
 
 // MARK: - Test Helpers (Mirrored from IrisClientTests.swift — local private copies)
 
-private final class GeminiMockURLProtocol: URLProtocol {
-    nonisolated(unsafe) static var requestHandler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+private actor HandlerStorage {
+    private var handler: ((URLRequest) async throws -> (HTTPURLResponse, Data))?
+    func setHandler(_ h: sending @escaping (URLRequest) async throws -> (HTTPURLResponse, Data)) {
+        handler = h
+    }
+    func callHandler(with request: URLRequest) async throws -> (HTTPURLResponse, Data) {
+        guard let handler else { throw URLError(.unknown) }
+        return try await handler(request)
+    }
+}
+
+private final class GeminiMockURLProtocol: URLProtocol, @unchecked Sendable {
+    static let storage = HandlerStorage()
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
-        guard let handler = GeminiMockURLProtocol.requestHandler else { return }
-        do {
-            let (response, data) = try handler(request)
-            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: data)
-            client?.urlProtocolDidFinishLoading(self)
-        } catch {
-            client?.urlProtocol(self, didFailWithError: error)
+        let req = request
+        let cli = client
+        Task {
+            do {
+                let (response, data) = try await GeminiMockURLProtocol.storage.callHandler(with: req)
+                cli?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+                cli?.urlProtocol(self, didLoad: data)
+                cli?.urlProtocolDidFinishLoading(self)
+            } catch {
+                cli?.urlProtocol(self, didFailWithError: error)
+            }
         }
     }
 
     override func stopLoading() {}
 }
 
-private func makeMockSession(handler: @escaping (URLRequest) throws -> (HTTPURLResponse, Data)) -> URLSession {
-    GeminiMockURLProtocol.requestHandler = handler
+private func makeMockSession(
+    handler: sending @escaping (URLRequest) async throws -> (HTTPURLResponse, Data)
+) async -> URLSession {
+    await GeminiMockURLProtocol.storage.setHandler(handler)
     let config = URLSessionConfiguration.ephemeral
     config.protocolClasses = [GeminiMockURLProtocol.self]
     return URLSession(configuration: config)
