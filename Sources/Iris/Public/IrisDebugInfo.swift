@@ -26,8 +26,8 @@ public struct IrisDebugInfo: Sendable {
     /// what the model produced, before any `JSONDecoder` processing.
     public let rawJSON: String
 
-    /// Creates a debug info snapshot. Called internally by `IrisClient` — not intended for external use.
-    public init(ocrText: String, rawJSON: String) {
+    /// Populated by `IrisClient` during a `parse` call when debug mode is enabled.
+    init(ocrText: String, rawJSON: String) {
         self.ocrText = ocrText
         self.rawJSON = rawJSON
     }
