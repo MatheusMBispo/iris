@@ -59,16 +59,16 @@ let iris = IrisClient(apiKey: "sk-ant-...")
 
 ## Testing Without API Calls
 
-Use `IrisModel.mock` to test your parsing logic without making real Anthropic API calls:
+Use `IrisProvider.mock` to test your parsing logic without making real Anthropic API calls:
 
 ```swift
 import Testing
 import Iris
 
 @Test func parseReceiptWithoutAPIKey() async throws {
-    // IrisClient(model:) init — no apiKey parameter needed at all
-    let iris = IrisClient(model: .mock)
-    // IrisModel.mock returns valid JSON without any Anthropic API call
+    // IrisClient(provider:) init — no apiKey parameter needed at all
+    let iris = IrisClient(provider: .mock)
+    // IrisProvider.mock returns valid JSON without any Anthropic API call
     // Use a real image file — ImagePipeline runs before the mock model intercepts
     let url = URL(fileURLWithPath: "Tests/IrisTests/Fixtures/supermarket-receipt.jpg")
     let receipt = try await iris.parse(fileURL: url, as: Receipt.self)
@@ -80,7 +80,7 @@ import Iris
 
 ## Documentation
 
-Full API documentation is available in **Xcode Quick Help** — place the cursor on any `IrisClient`, `IrisModel`, or `IrisError` symbol and press Option-click (or Control-Command-?).
+Full API documentation is available in **Xcode Quick Help** — place the cursor on any `IrisClient`, `IrisProvider`, or `IrisError` symbol and press Option-click (or Control-Command-?).
 
 To generate a local DocC archive:
 

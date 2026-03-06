@@ -19,13 +19,13 @@ import AppKit
 /// let receipt = try await iris.parse(data: jpegData, mimeType: "image/jpeg", as: Receipt.self)
 /// ```
 ///
-/// Use `IrisModel.mock` in tests to avoid real API calls:
+/// Use `IrisProvider.mock` in tests to avoid real API calls:
 /// ```swift
-/// let iris = IrisClient(model: .mock)
+/// let iris = IrisClient(provider: .mock)
 /// ```
 public actor IrisClient {
 
-    let model: IrisModel        // internal let: accessible via @testable import for tests
+    let provider: IrisProvider        // internal let: accessible via @testable import for tests
     let retryPolicy: RetryPolicy
     let debugMode: Bool
 
@@ -46,15 +46,15 @@ public actor IrisClient {
 
     /// Creates a client with an explicit API key.
     public init(apiKey: String, retryPolicy: RetryPolicy = .none, debugMode: Bool = false) {
-        self.model = IrisModel.claude(apiKey: apiKey)
+        self.provider = IrisProvider.claude(apiKey: apiKey)
         self.retryPolicy = retryPolicy
         self.debugMode = debugMode
     }
 
-    /// Creates a client with an explicit API key and custom model.
-    /// The provided model overrides the default Claude model.
-    public init(apiKey: String, model: IrisModel, debugMode: Bool = false) {
-        self.model = model
+    /// Creates a client with an explicit API key and custom provider.
+    /// The provided provider overrides the default Claude provider.
+    public init(apiKey: String, provider: IrisProvider, debugMode: Bool = false) {
+        self.provider = provider
         self.retryPolicy = .none
         self.debugMode = debugMode
     }
@@ -68,9 +68,9 @@ public actor IrisClient {
 
     // MARK: - Internal Initializers
 
-    /// Injects a pre-built model directly.
-    public init(model: IrisModel, retryPolicy: RetryPolicy = .none, debugMode: Bool = false) {
-        self.model = model
+    /// Injects a pre-built provider directly.
+    public init(provider: IrisProvider, retryPolicy: RetryPolicy = .none, debugMode: Bool = false) {
+        self.provider = provider
         self.retryPolicy = retryPolicy
         self.debugMode = debugMode
     }
@@ -80,9 +80,9 @@ public actor IrisClient {
     init(environment: [String: String], retryPolicy: RetryPolicy = .none, debugMode: Bool = false) {
         let envKey = environment["ANTHROPIC_API_KEY"] ?? ""
         if envKey.isEmpty {
-            self.model = IrisModel { _, _ in throw IrisError.invalidAPIKey }
+            self.provider = IrisProvider { _, _ in throw IrisError.invalidAPIKey }
         } else {
-            self.model = IrisModel.claude(apiKey: envKey)
+            self.provider = IrisProvider.claude(apiKey: envKey)
         }
         self.retryPolicy = retryPolicy
         self.debugMode = debugMode
@@ -95,13 +95,13 @@ public actor IrisClient {
     /// - Parameters:
     ///   - data: Raw image bytes. Supported MIME types: `"image/jpeg"`, `"image/png"`, `"image/webp"`, `"image/gif"`.
     ///   - mimeType: The MIME type string describing the `data` format.
-    ///   - type: The `Decodable` type to decode the model response into.
+    ///   - type: The `Decodable` type to decode the provider response into.
     /// - Returns: A fully populated instance of `T`.
     /// - Throws: `IrisError.imageUnreadable` if the data cannot be normalized to JPEG.
     ///           `IrisError.networkError` if a connectivity failure occurs.
     ///           `IrisError.invalidAPIKey` if the API key is missing or rejected.
-    ///           `IrisError.modelFailure` if the model returns an error response.
-    ///           `IrisError.decodingFailed` if the model output cannot be decoded into `T`.
+    ///           `IrisError.modelFailure` if the provider returns an error response.
+    ///           `IrisError.decodingFailed` if the provider output cannot be decoded into `T`.
     public func parse<T: Decodable>(data: Data, mimeType: String, as type: T.Type) async throws -> T {
         // Stage 1: Image normalization
         IrisLogger.image.debug("Normalizing image [\(mimeType, privacy: .public)]")
@@ -115,20 +115,20 @@ public actor IrisClient {
 
         let prompt = PromptBuilder.build(for: type)
 
-        // Stage 2: Model call
-        IrisLogger.network.debug("Invoking model parse")
+        // Stage 2: Provider call
+        IrisLogger.network.debug("Invoking provider parse")
         let rawJSON: String
         do {
-            rawJSON = try await RetryEngine.execute(policy: retryPolicy) { try await self.model.parse(imageData, prompt) }
+            rawJSON = try await RetryEngine.execute(policy: retryPolicy) { try await self.provider.parse(imageData, prompt) }
         } catch {
-            IrisLogger.network.error("Model parse failed: \(error.localizedDescription, privacy: .public)")
+            IrisLogger.network.error("Provider parse failed: \(error.localizedDescription, privacy: .public)")
             if debugMode {
                 let captured = String(describing: error)
                 lastDebugInfo = IrisDebugInfo(ocrText: captured, rawJSON: captured)
             }
             throw error
         }
-        IrisLogger.network.debug("Model parse completed")
+        IrisLogger.network.debug("Provider parse completed")
 
         if debugMode {
             lastDebugInfo = IrisDebugInfo(ocrText: rawJSON, rawJSON: rawJSON)
@@ -150,13 +150,13 @@ public actor IrisClient {
     ///
     /// - Parameters:
     ///   - fileURL: A file URL pointing to the image to parse.
-    ///   - type: The `Decodable` type to decode the model response into.
+    ///   - type: The `Decodable` type to decode the provider response into.
     /// - Returns: A fully populated instance of `T`.
     /// - Throws: `IrisError.imageUnreadable` if the file cannot be read or normalized to JPEG.
     ///           `IrisError.networkError` if a connectivity failure occurs.
     ///           `IrisError.invalidAPIKey` if the API key is missing or rejected.
-    ///           `IrisError.modelFailure` if the model returns an error response.
-    ///           `IrisError.decodingFailed` if the model output cannot be decoded into `T`.
+    ///           `IrisError.modelFailure` if the provider returns an error response.
+    ///           `IrisError.decodingFailed` if the provider output cannot be decoded into `T`.
     public func parse<T: Decodable>(fileURL: URL, as type: T.Type) async throws -> T {
         // Stage 1: Image normalization
         IrisLogger.image.debug("Normalizing image from file: \(fileURL.lastPathComponent, privacy: .public)")
@@ -170,20 +170,20 @@ public actor IrisClient {
 
         let prompt = PromptBuilder.build(for: type)
 
-        // Stage 2: Model call
-        IrisLogger.network.debug("Invoking model parse")
+        // Stage 2: Provider call
+        IrisLogger.network.debug("Invoking provider parse")
         let rawJSON: String
         do {
-            rawJSON = try await RetryEngine.execute(policy: retryPolicy) { try await self.model.parse(imageData, prompt) }
+            rawJSON = try await RetryEngine.execute(policy: retryPolicy) { try await self.provider.parse(imageData, prompt) }
         } catch {
-            IrisLogger.network.error("Model parse failed: \(error.localizedDescription, privacy: .public)")
+            IrisLogger.network.error("Provider parse failed: \(error.localizedDescription, privacy: .public)")
             if debugMode {
                 let captured = String(describing: error)
                 lastDebugInfo = IrisDebugInfo(ocrText: captured, rawJSON: captured)
             }
             throw error
         }
-        IrisLogger.network.debug("Model parse completed")
+        IrisLogger.network.debug("Provider parse completed")
 
         if debugMode {
             lastDebugInfo = IrisDebugInfo(ocrText: rawJSON, rawJSON: rawJSON)
@@ -206,13 +206,13 @@ public actor IrisClient {
     ///
     /// - Parameters:
     ///   - image: The `UIImage` to parse.
-    ///   - type: The `Decodable` type to decode the model response into.
+    ///   - type: The `Decodable` type to decode the provider response into.
     /// - Returns: A fully populated instance of `T`.
     /// - Throws: `IrisError.imageUnreadable` if the image cannot be normalized to JPEG.
     ///           `IrisError.networkError` if a connectivity failure occurs.
     ///           `IrisError.invalidAPIKey` if the API key is missing or rejected.
-    ///           `IrisError.modelFailure` if the model returns an error response.
-    ///           `IrisError.decodingFailed` if the model output cannot be decoded into `T`.
+    ///           `IrisError.modelFailure` if the provider returns an error response.
+    ///           `IrisError.decodingFailed` if the provider output cannot be decoded into `T`.
     public func parse<T: Decodable>(image: UIImage, as type: T.Type) async throws -> T {
         // Stage 1: Image normalization
         IrisLogger.image.debug("Normalizing UIImage")
@@ -226,20 +226,20 @@ public actor IrisClient {
 
         let prompt = PromptBuilder.build(for: type)
 
-        // Stage 2: Model call
-        IrisLogger.network.debug("Invoking model parse")
+        // Stage 2: Provider call
+        IrisLogger.network.debug("Invoking provider parse")
         let rawJSON: String
         do {
-            rawJSON = try await RetryEngine.execute(policy: retryPolicy) { try await self.model.parse(imageData, prompt) }
+            rawJSON = try await RetryEngine.execute(policy: retryPolicy) { try await self.provider.parse(imageData, prompt) }
         } catch {
-            IrisLogger.network.error("Model parse failed: \(error.localizedDescription, privacy: .public)")
+            IrisLogger.network.error("Provider parse failed: \(error.localizedDescription, privacy: .public)")
             if debugMode {
                 let captured = String(describing: error)
                 lastDebugInfo = IrisDebugInfo(ocrText: captured, rawJSON: captured)
             }
             throw error
         }
-        IrisLogger.network.debug("Model parse completed")
+        IrisLogger.network.debug("Provider parse completed")
 
         if debugMode {
             lastDebugInfo = IrisDebugInfo(ocrText: rawJSON, rawJSON: rawJSON)
@@ -263,13 +263,13 @@ public actor IrisClient {
     ///
     /// - Parameters:
     ///   - image: The `NSImage` to parse.
-    ///   - type: The `Decodable` type to decode the model response into.
+    ///   - type: The `Decodable` type to decode the provider response into.
     /// - Returns: A fully populated instance of `T`.
     /// - Throws: `IrisError.imageUnreadable` if the image cannot be normalized to JPEG.
     ///           `IrisError.networkError` if a connectivity failure occurs.
     ///           `IrisError.invalidAPIKey` if the API key is missing or rejected.
-    ///           `IrisError.modelFailure` if the model returns an error response.
-    ///           `IrisError.decodingFailed` if the model output cannot be decoded into `T`.
+    ///           `IrisError.modelFailure` if the provider returns an error response.
+    ///           `IrisError.decodingFailed` if the provider output cannot be decoded into `T`.
     public func parse<T: Decodable>(image: NSImage, as type: T.Type) async throws -> T {
         // Stage 1: Image normalization
         IrisLogger.image.debug("Normalizing NSImage")
@@ -283,20 +283,20 @@ public actor IrisClient {
 
         let prompt = PromptBuilder.build(for: type)
 
-        // Stage 2: Model call
-        IrisLogger.network.debug("Invoking model parse")
+        // Stage 2: Provider call
+        IrisLogger.network.debug("Invoking provider parse")
         let rawJSON: String
         do {
-            rawJSON = try await RetryEngine.execute(policy: retryPolicy) { try await self.model.parse(imageData, prompt) }
+            rawJSON = try await RetryEngine.execute(policy: retryPolicy) { try await self.provider.parse(imageData, prompt) }
         } catch {
-            IrisLogger.network.error("Model parse failed: \(error.localizedDescription, privacy: .public)")
+            IrisLogger.network.error("Provider parse failed: \(error.localizedDescription, privacy: .public)")
             if debugMode {
                 let captured = String(describing: error)
                 lastDebugInfo = IrisDebugInfo(ocrText: captured, rawJSON: captured)
             }
             throw error
         }
-        IrisLogger.network.debug("Model parse completed")
+        IrisLogger.network.debug("Provider parse completed")
 
         if debugMode {
             lastDebugInfo = IrisDebugInfo(ocrText: rawJSON, rawJSON: rawJSON)

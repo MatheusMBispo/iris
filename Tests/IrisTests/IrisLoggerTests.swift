@@ -23,15 +23,15 @@ struct IrisLoggerTests {
     @Test("parse succeeds with logging active")
     func parseCallSucceedsWithLoggingActive() async throws {
         struct Receipt: Decodable { var total: Double? }
-        let iris = IrisClient(model: .mock)
+        let iris = IrisClient(provider: .mock)
         let result = try await iris.parse(data: minimalJPEGData(), mimeType: "image/jpeg", as: Receipt.self)
         #expect(result.total == nil)
     }
 
     @Test("parse failure propagates correctly with logging active")
     func parseFailurePropagatesWithLoggingActive() async throws {
-        let model = IrisModel { _, _ in throw IrisError.networkError(underlying: URLError(.notConnectedToInternet)) }
-        let iris = IrisClient(model: model)
+        let model = IrisProvider { _, _ in throw IrisError.networkError(underlying: URLError(.notConnectedToInternet)) }
+        let iris = IrisClient(provider: model)
         do {
             _ = try await iris.parse(data: minimalJPEGData(), mimeType: "image/jpeg", as: EmptyDecodable.self)
             Issue.record("Expected networkError to be thrown")
@@ -42,7 +42,7 @@ struct IrisLoggerTests {
 
     @Test("image normalization failure propagates with logging active")
     func imageNormalizationFailurePropagatesWithLoggingActive() async {
-        let iris = IrisClient(model: .mock)
+        let iris = IrisClient(provider: .mock)
         do {
             _ = try await iris.parse(data: Data([0x00, 0x01, 0x02]), mimeType: "image/jpeg", as: EmptyDecodable.self)
             Issue.record("Expected imageUnreadable to be thrown")

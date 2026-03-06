@@ -1,6 +1,6 @@
 import Foundation
 
-/// Determines whether a failed `IrisModel.parse` call should be retried.
+/// Determines whether a failed `IrisProvider.parse` call should be retried.
 ///
 /// Use the built-in factories for common strategies or provide a custom closure:
 /// ```swift

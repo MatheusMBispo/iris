@@ -1,19 +1,19 @@
 import Foundation
 
-/// A Protocol Witnesses struct that encapsulates an AI model's parsing behavior.
+/// A Protocol Witnesses struct that encapsulates an AI provider's parsing behavior.
 ///
-/// `IrisModel` provides the boundary between `IrisClient` and any AI provider.
-/// The default implementation is `IrisModel.claude`, which calls the Anthropic Messages API.
-/// Use `IrisModel.mock` in tests and SwiftUI Previews to avoid real network calls.
+/// `IrisProvider` provides the boundary between `IrisClient` and any AI provider.
+/// The default implementation is `IrisProvider.claude`, which calls the Anthropic Messages API.
+/// Use `IrisProvider.mock` in tests and SwiftUI Previews to avoid real network calls.
 ///
-/// Custom models can be injected without changing any call-site syntax:
+/// Custom providers can be injected without changing any call-site syntax:
 /// ```swift
-/// let custom = IrisModel { imageData, prompt in
+/// let custom = IrisProvider { imageData, prompt in
 ///     return #"{"storeName": "Iris Store", "total": 42.0}"#
 /// }
-/// let iris = IrisClient(apiKey: key, model: custom)
+/// let iris = IrisClient(apiKey: key, provider: custom)
 /// ```
-public struct IrisModel: Sendable {
+public struct IrisProvider: Sendable {
 
     /// The underlying parsing closure that receives image data and a prompt, returning raw JSON.
     ///
@@ -24,44 +24,44 @@ public struct IrisModel: Sendable {
     /// - Throws: Any `IrisError` variant appropriate to the failure.
     public var parse: @Sendable (_ imageData: Data, _ prompt: String) async throws -> String
 
-    /// Creates a custom `IrisModel` from a parsing closure.
+    /// Creates a custom `IrisProvider` from a parsing closure.
     ///
-    /// - Parameter parse: The async throwing closure that implements model parsing.
+    /// - Parameter parse: The async throwing closure that implements provider parsing.
     public init(parse: @escaping @Sendable (_ imageData: Data, _ prompt: String) async throws -> String) {
         self.parse = parse
     }
 
     // MARK: - Public Factory
 
-    /// The default Claude model implementation using the Anthropic Messages API via URLSession.
+    /// The default Claude provider implementation using the Anthropic Messages API via URLSession.
     ///
     /// Sends JPEG image data and a JSON Schema prompt to the Anthropic API and returns
-    /// the raw JSON string from the model's first text content block.
+    /// the raw JSON string from the provider's first text content block.
     ///
     /// - Parameter apiKey: Your Anthropic API key.
-    /// - Returns: An `IrisModel` configured to call `https://api.anthropic.com/v1/messages`.
-    public static func claude(apiKey: String) -> IrisModel {
+    /// - Returns: An `IrisProvider` configured to call `https://api.anthropic.com/v1/messages`.
+    public static func claude(apiKey: String) -> IrisProvider {
         claude(apiKey: apiKey, session: .shared)
     }
 
     // MARK: - Mock Factory
 
-    /// A mock model that returns a hardcoded empty JSON object without making any network calls.
+    /// A mock provider that returns a hardcoded empty JSON object without making any network calls.
     ///
-    /// Use `IrisModel.mock` in unit tests and SwiftUI Previews to avoid real API calls.
+    /// Use `IrisProvider.mock` in unit tests and SwiftUI Previews to avoid real API calls.
     /// The mock returns `"{}"`, which decodes to a struct where all `Optional` fields are `nil`.
     ///
     /// ```swift
-    /// let iris = IrisClient(model: .mock)
+    /// let iris = IrisClient(provider: .mock)
     /// let result = try await iris.parse(data: data, mimeType: "image/jpeg", as: MyStruct.self)
     /// // result.anyOptionalField == nil
     /// ```
-    public static let mock = IrisModel { _, _ in "{}" }
+    public static let mock = IrisProvider { _, _ in "{}" }
 
     // MARK: - Internal Factory (testable via injected session)
 
-    static func claude(apiKey: String, session: URLSession) -> IrisModel {
-        IrisModel { imageData, prompt in
+    static func claude(apiKey: String, session: URLSession) -> IrisProvider {
+        IrisProvider { imageData, prompt in
             let request = try AnthropicRequest.build(imageData: imageData, prompt: prompt, apiKey: apiKey)
             let (data, response): (Data, URLResponse)
             do {
