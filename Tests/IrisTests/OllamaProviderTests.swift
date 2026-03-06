@@ -76,23 +76,24 @@ struct OllamaProviderTests {
 
     @Test func customEndpointIsUsed() async throws {
         let customEndpoint = URL(string: "http://custom-host:9999/api/chat")!
-        var capturedRequest: URLRequest?
+        let urlBox = CaptureBox<URL>()
         let session = await makeMockSession { request in
-            capturedRequest = request
+            if let url = request.url { await urlBox.set(url) }
             let response = HTTPURLResponse(
                 url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             return (response, ollamaSuccessJSON)
         }
         let provider = IrisProvider.ollama(model: "llava", endpoint: customEndpoint, session: session)
         _ = try await provider.parse(minimalJPEGData(), "test prompt")
-        #expect(capturedRequest?.url == customEndpoint)
+        let capturedURL = await urlBox.get()
+        #expect(capturedURL == customEndpoint)
     }
 
     @Test func requestBodyContainsStreamFalseAndBase64Image() async throws {
-        var capturedRequest: URLRequest?
+        let bodyBox = CaptureBox<Data>()
         let imageData = minimalJPEGData()
         let session = await makeMockSession { request in
-            capturedRequest = request
+            if let data = bodyData(from: request) { await bodyBox.set(data) }
             let response = HTTPURLResponse(
                 url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             return (response, ollamaSuccessJSON)
@@ -104,7 +105,7 @@ struct OllamaProviderTests {
         )
         _ = try await provider.parse(imageData, "test prompt")
 
-        let body = bodyData(from: capturedRequest!)
+        let body = await bodyBox.get()
         #expect(body != nil)
         let bodyString = String(data: body!, encoding: .utf8)!
         // JSONEncoder escapes forward slashes (/ → \/), normalize before comparing base64
@@ -145,9 +146,15 @@ struct OllamaTypedReceipt {
 
 // MARK: - Test Helpers (Mirrored from IrisClientTests.swift — local private copies)
 
+private actor CaptureBox<T> {
+    private var value: T?
+    func set(_ v: T) { value = v }
+    func get() -> T? { value }
+}
+
 private actor HandlerStorage {
-    private var handler: ((URLRequest) async throws -> (HTTPURLResponse, Data))?
-    func setHandler(_ h: @escaping (URLRequest) async throws -> (HTTPURLResponse, Data)) { handler = h }
+    private var handler: (@Sendable (URLRequest) async throws -> (HTTPURLResponse, Data))?
+    func setHandler(_ h: @escaping @Sendable (URLRequest) async throws -> (HTTPURLResponse, Data)) { handler = h }
     func callHandler(with req: URLRequest) async throws -> (HTTPURLResponse, Data) {
         guard let handler else { throw URLError(.unknown) }
         return try await handler(req)
@@ -179,7 +186,7 @@ private final class OllamaMockURLProtocol: URLProtocol, @unchecked Sendable {
 }
 
 private func makeMockSession(
-    handler: @escaping (URLRequest) async throws -> (HTTPURLResponse, Data)
+    handler: @escaping @Sendable (URLRequest) async throws -> (HTTPURLResponse, Data)
 ) async -> URLSession {
     await OllamaMockURLProtocol.storage.setHandler(handler)
     let config = URLSessionConfiguration.ephemeral

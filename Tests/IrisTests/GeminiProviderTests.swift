@@ -111,9 +111,9 @@ struct GeminiProviderTests {
     }
 
     @Test func apiKeyIsInURLQueryNotHeader() async throws {
-        var capturedRequest: URLRequest?
+        let requestBox = CaptureBox<URLRequest>()
         let session = await makeMockSession { request in
-            capturedRequest = request
+            await requestBox.set(request)
             let response = HTTPURLResponse(
                 url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             return (response, geminiSuccessJSON)
@@ -121,6 +121,7 @@ struct GeminiProviderTests {
         let provider = IrisProvider.gemini(apiKey: "AIza-test-key", model: "gemini-2.0-flash", session: session)
         _ = try await provider.parse(minimalJPEGData(), "test prompt")
 
+        let capturedRequest = await requestBox.get()
         let urlString = capturedRequest?.url?.absoluteString ?? ""
         #expect(urlString.contains("key=AIza-test-key"))
         // API key must NOT be in Authorization header
@@ -154,9 +155,15 @@ struct GeminiTypedReceipt {
 
 // MARK: - Test Helpers (Mirrored from IrisClientTests.swift — local private copies)
 
+private actor CaptureBox<T: Sendable> {
+    private var value: T?
+    func set(_ v: T) { value = v }
+    func get() -> T? { value }
+}
+
 private actor HandlerStorage {
-    private var handler: ((URLRequest) async throws -> (HTTPURLResponse, Data))?
-    func setHandler(_ h: @escaping (URLRequest) async throws -> (HTTPURLResponse, Data)) { handler = h }
+    private var handler: (@Sendable (URLRequest) async throws -> (HTTPURLResponse, Data))?
+    func setHandler(_ h: @escaping @Sendable (URLRequest) async throws -> (HTTPURLResponse, Data)) { handler = h }
     func callHandler(with req: URLRequest) async throws -> (HTTPURLResponse, Data) {
         guard let handler else { throw URLError(.unknown) }
         return try await handler(req)
@@ -188,7 +195,7 @@ private final class GeminiMockURLProtocol: URLProtocol, @unchecked Sendable {
 }
 
 private func makeMockSession(
-    handler: @escaping (URLRequest) async throws -> (HTTPURLResponse, Data)
+    handler: @escaping @Sendable (URLRequest) async throws -> (HTTPURLResponse, Data)
 ) async -> URLSession {
     await GeminiMockURLProtocol.storage.setHandler(handler)
     let config = URLSessionConfiguration.ephemeral

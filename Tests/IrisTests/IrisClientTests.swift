@@ -696,8 +696,8 @@ struct DebugModeTests {
 // MARK: - Test Helpers
 
 private actor HandlerStorage {
-    private var handler: ((URLRequest) async throws -> (HTTPURLResponse, Data))?
-    func setHandler(_ h: @escaping (URLRequest) async throws -> (HTTPURLResponse, Data)) { handler = h }
+    private var handler: (@Sendable (URLRequest) async throws -> (HTTPURLResponse, Data))?
+    func setHandler(_ h: @escaping @Sendable (URLRequest) async throws -> (HTTPURLResponse, Data)) { handler = h }
     func callHandler(with req: URLRequest) async throws -> (HTTPURLResponse, Data) {
         guard let handler else { throw URLError(.unknown) }
         return try await handler(req)
@@ -729,7 +729,7 @@ private final class MockURLProtocol: URLProtocol, @unchecked Sendable {
 }
 
 private func makeMockSession(
-    handler: @escaping (URLRequest) async throws -> (HTTPURLResponse, Data)
+    handler: @escaping @Sendable (URLRequest) async throws -> (HTTPURLResponse, Data)
 ) async -> URLSession {
     await MockURLProtocol.storage.setHandler(handler)
     let config = URLSessionConfiguration.ephemeral
