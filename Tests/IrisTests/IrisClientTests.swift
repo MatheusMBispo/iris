@@ -89,7 +89,7 @@ struct IrisProviderMockTests {
 
 // MARK: - Custom provider injection tests
 
-@Suite("Custom Model Injection")
+@Suite("Custom Provider Injection")
 struct CustomModelInjectionTests {
     private struct LabelInfo: Decodable {
         let label: String

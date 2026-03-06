@@ -36,7 +36,13 @@ extension IrisProvider {
             if http.statusCode == 400 || http.statusCode == 403 {
                 let parsed = try? JSONDecoder().decode(GeminiErrorResponse.self, from: data)
                 let status = parsed?.error?.status ?? ""
-                if status == "PERMISSION_DENIED" || http.statusCode == 403 {
+                let message = (parsed?.error?.message ?? "").lowercased()
+                let isAPIKeyError =
+                    status == "PERMISSION_DENIED" ||
+                    status == "INVALID_ARGUMENT" ||
+                    message.contains("api key") ||
+                    message.contains("apikey")
+                if http.statusCode == 403 || isAPIKeyError {
                     throw IrisError.invalidAPIKey
                 }
                 let body = String(data: data, encoding: .utf8) ?? "Unknown Gemini error"
@@ -128,6 +134,7 @@ private struct GeminiErrorResponse: Decodable {
     struct ErrorBody: Decodable {
         let code: Int
         let status: String
+        let message: String?
     }
     let error: ErrorBody?
 }

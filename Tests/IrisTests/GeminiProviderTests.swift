@@ -16,7 +16,7 @@ struct GeminiProviderTests {
     """.data(using: .utf8)!
 
     private let gemini400JSON = """
-    {"error":{"code":400,"status":"PERMISSION_DENIED","message":"API key not valid."}}
+    {"error":{"code":400,"status":"INVALID_ARGUMENT","message":"API key not valid."}}
     """.data(using: .utf8)!
 
     // MARK: - Tests
@@ -65,10 +65,11 @@ struct GeminiProviderTests {
         } catch {
             caught = error
         }
-        // 400 with PERMISSION_DENIED — per implementation, 400 without PERMISSION_DENIED → modelFailure
-        // This test verifies error is thrown (either invalidAPIKey or modelFailure)
-        #expect(caught != nil)
-        #expect(caught is IrisError)
+        if case .invalidAPIKey = caught as? IrisError {
+            // expected
+        } else {
+            Issue.record("Expected IrisError.invalidAPIKey, got: \(String(describing: caught))")
+        }
     }
 
     @Test func http500ThrowsModelFailure() async throws {
