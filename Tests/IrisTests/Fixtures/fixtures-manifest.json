@@ -1,0 +1,31 @@
+{
+  "story": "5.2",
+  "generated_at": "2026-03-05",
+  "content_policy": "no-betting-no-gambling-domain-content",
+  "fixtures": [
+    {
+      "file": "supermarket-receipt.jpg",
+      "category": "receipt",
+      "domain": "general-commerce"
+    },
+    {
+      "file": "restaurant-receipt.jpg",
+      "category": "receipt",
+      "domain": "general-commerce"
+    },
+    {
+      "file": "invoice.jpg",
+      "category": "invoice",
+      "domain": "general-commerce"
+    },
+    {
+      "file": "low-quality-receipt.jpg",
+      "category": "receipt",
+      "domain": "general-commerce"
+    }
+  ],
+  "verification": {
+    "manual_review_required": true,
+    "review_rule": "fixture text and visual content must not include betting slips, gambling terms, odds, stake, or sportsbook branding"
+  }
+}

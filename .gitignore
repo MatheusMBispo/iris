@@ -1,0 +1,21 @@
+# Build artifacts
+.build/
+*.o
+*.d
+*.swp
+
+# Xcode
+*.xcuserdata
+*.xcworkspace/xcuserdata
+DerivedData/
+.swiftpm/
+
+# macOS
+.DS_Store
+
+# AI tooling — MUST NOT be in public Iris repository
+_bmad/
+_bmad-output/
+.planning/
+.claude/
+.opencode/
