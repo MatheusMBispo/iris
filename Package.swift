@@ -21,6 +21,7 @@ let package = Package(
             from: "1.1.0"
         ),
     ],
+    swiftLanguageModes: [.v6],
     targets: [
         // Core library — the public SDK
         .target(

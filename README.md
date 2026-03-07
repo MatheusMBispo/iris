@@ -92,7 +92,7 @@ Add Iris with Swift Package Manager:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/matheusbispo/Iris.git", from: "1.0.0"),
+    .package(url: "https://github.com/MatheusMBispo/Iris.git", from: "0.1.0"),
 ],
 targets: [
     .target(
